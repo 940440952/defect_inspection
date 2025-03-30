@@ -1,0 +1,52 @@
+{
+    "version": "1.0.0",
+    "camera": {
+        "index": 0,
+        "exposure": 10000,
+        "gain": 10.0,
+        "save_images": true
+    },
+    "conveyor": {
+        "enable_pin": 17,
+        "direction_pin": 27,
+        "pulse_pin": 22,
+        "sensor_pin": 23,
+        "emergency_stop_pin": 24,
+        "ejector_pin": 25,
+        "ejector_active_high": true,
+        "conveyor_speed": 50,
+        "stop_delay": 0.5
+    },
+    "detector": {
+        "model_path": "dependencies/models/defect_model.onnx",
+        "confidence_threshold": 0.25,
+        "class_names": ["scratch", "dent", "stain", "crack", "deformation"]
+    },
+    "api": {
+        "api_url": "http://example.com/api",
+        "auth_token": "",
+        "timeout": 10,
+        "max_retries": 3,
+        "retry_delay": 5
+    },
+    "label_studio": {
+        "url": "",
+        "token": "",
+        "project_id": null
+    },
+    "display": {
+        "enabled": true,
+        "window_name": "Defect Inspection",
+        "fullscreen": false,
+        "resolution": [1920, 1080],
+        "display_time": 2.0
+    },
+    "ejection": {
+        "enabled": true,
+        "threshold": 0.5,
+        "delay": 1.0,
+        "duration": 0.5
+    },
+    "output_dir": "data/images",
+    "stats_interval": 3600
+}
