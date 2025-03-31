@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 API client module for defect inspection system.
-Handles communication with remote servers for data upload and synchronization.
-Also supports integration with Label Studio for data annotation.
+Handles communication with Label Studio for data upload, annotation and management.
 """
 
 import os
@@ -11,6 +10,7 @@ import time
 import logging
 import threading
 import requests
+import base64
 from urllib.parse import urljoin
 from requests.exceptions import RequestException, ConnectionError, Timeout
 from typing import Dict, List, Optional, Tuple, Union, Any
@@ -20,28 +20,25 @@ logger = logging.getLogger("DefectInspection.APIClient")
 
 class APIClient:
     """
-    API client for uploading detection results and images to remote server.
-    Also supports Label Studio integration for data labeling workflows.
+    API client for managing detection results and images using Label Studio as backend.
+    Supports uploading images, creating annotations, and managing project data.
     """
     
-    def __init__(self, api_url: str, auth_token: str = "", 
+    def __init__(self, api_url: str, api_token: str = "", 
                  timeout: int = 10, max_retries: int = 3, 
-                 retry_delay: int = 5, label_studio_url: str = None,
-                 label_studio_token: str = None):
+                 retry_delay: int = 5):
         """
-        Initialize API client
+        Initialize API client with Label Studio as backend
         
         Args:
-            api_url: Base URL for the API
-            auth_token: Authentication token for API access
+            api_url: Base URL for Label Studio instance
+            api_token: API token for Label Studio access
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
             retry_delay: Delay between retries in seconds
-            label_studio_url: URL for Label Studio instance (if used)
-            label_studio_token: API token for Label Studio (if used)
         """
         self.api_url = api_url.rstrip('/') if api_url else ""
-        self.auth_token = auth_token
+        self.api_token = api_token
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -49,38 +46,143 @@ class APIClient:
         self.upload_lock = threading.Lock()
         self.upload_thread = None
         self.running = False
+        self.project_id = None
         
-        # Label Studio configuration
-        self.label_studio_url = label_studio_url
-        self.label_studio_token = label_studio_token
-        self.label_studio_client = None
-        
-        # Initialize Label Studio client if configured
-        if label_studio_url and label_studio_token:
+        # Initialize connection if URL and token provided
+        if self.api_url and self.api_token:
             try:
-                self._init_label_studio_client()
-            except ImportError:
-                logger.warning("Label Studio SDK not installed. Run 'pip install label-studio-sdk' to enable this feature.")
+                project_id = self._init_connection("Defect Inspection")
+                if project_id:
+                    self.project_id = project_id
+                    logger.info(f"Using project ID: {self.project_id}")
+                else:
+                    logger.error("Failed to initialize Label Studio connection")
             except Exception as e:
-                logger.error(f"Failed to initialize Label Studio client: {e}")
+                logger.error(f"Failed to initialize connection: {e}")
         
-        # Test API connection if URL provided
-        if self.api_url:
-            self.test_connection()
-            logger.info(f"API client initialized with endpoint: {self.api_url}")
+    def _init_connection(self, project_name: str = "Defect Inspection") -> Optional[int]:
+        """
+        Initialize connection and ensure project exists
         
-    def _init_label_studio_client(self):
-        """Initialize Label Studio client if SDK is available"""
+        Args:
+            project_name: Name of the project to use or create
+            
+        Returns:
+            Optional[int]: Project ID if successful, None otherwise
+        """
+        if not self.api_url or not self.api_token:
+            return None
+            
         try:
-            from label_studio_sdk import Client
-            self.label_studio_client = Client(
-                url=self.label_studio_url,
-                api_key=self.label_studio_token
+            # Check connection to API
+            headers = self._get_headers()
+            response = requests.get(
+                f"{self.api_url}/api/projects/",
+                headers=headers,
+                timeout=self.timeout
             )
-            logger.info(f"Label Studio client initialized: {self.label_studio_url}")
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to connect to Label Studio: Status {response.status_code}")
+                return None
+                
+            # Find or create project
+            project_id = self._find_or_create_project(project_name)
+            return project_id
+            
         except Exception as e:
-            logger.error(f"Error initializing Label Studio client: {e}")
-            self.label_studio_client = None
+            logger.error(f"Error initializing connection: {e}")
+            return None
+    
+    def _get_headers(self) -> Dict[str, str]:
+        """
+        Get request headers with authentication
+        
+        Returns:
+            Dict[str, str]: Headers dictionary
+        """
+        return {
+            'Authorization': f'Token {self.api_token}',
+            'Content-Type': 'application/json'
+        }
+            
+    def _find_or_create_project(self, project_name: str) -> Optional[int]:
+        """
+        Find existing project by name or create a new one
+        
+        Args:
+            project_name: Name of the project to find or create
+            
+        Returns:
+            Optional[int]: Project ID if found or created, None otherwise
+        """
+        if not self.api_url or not self.api_token:
+            return None
+            
+        try:
+            # Get all projects
+            headers = self._get_headers()
+            response = requests.get(
+                f"{self.api_url}/api/projects/",
+                headers=headers,
+                timeout=self.timeout
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to list projects: Status {response.status_code}")
+                return None
+                
+            # Parse response
+            projects = response.json()
+            
+            for i, project in enumerate(projects.get('results')):
+                if project.get('title') == project_name:
+                    logger.info(f"Found existing project: {project_name} (ID: {project.get('id')})")
+                    return project.get('id')
+            
+            # Create new project if not found
+            logger.info(f"Creating new project: {project_name}")
+            
+            # Define labeling config for object detection
+            labeling_config = """
+            <View>
+                <Image name="image" value="$image"/>
+                <Rectangle name="rectangle" toName="image"/>  <!-- 使用Rectangle而不是RectangleLabels -->
+            </View>
+            """
+            
+            # Create project
+            create_data = {
+                'title': project_name,
+                'description': 'Automatically created by Defect Inspection System',
+                'label_config': labeling_config
+            }
+            
+            response = requests.post(
+                f"{self.api_url}/api/projects/",
+                headers=headers,
+                json=create_data,
+                timeout=self.timeout
+            )
+            
+            if response.status_code not in [201, 200]:
+                logger.error(f"Failed to create project: Status {response.status_code}")
+                return None
+                
+            # Get project ID from response
+            project_data = response.json()
+            project_id = project_data.get('id')
+            
+            if project_id:
+                logger.info(f"Created new project: {project_name} (ID: {project_id})")
+                return project_id
+            else:
+                logger.error("Project created but no ID returned")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error finding/creating project: {e}")
+            return None
                 
     def test_connection(self) -> bool:
         """
@@ -96,203 +198,380 @@ class APIClient:
         try:
             headers = self._get_headers()
             response = requests.get(
-                urljoin(self.api_url, "/status"),
+                f"{self.api_url}/api/projects/",
                 headers=headers,
                 timeout=self.timeout
             )
             
             if response.status_code == 200:
-                logger.info("API connection test successful")
+                logger.info("Connection test successful")
                 return True
             elif response.status_code == 401:
-                logger.error("API authentication failed (invalid token)")
+                logger.error("Authentication failed (invalid token)")
                 return False
             else:
-                logger.warning(f"API connection test returned status {response.status_code}")
+                logger.warning(f"Connection test returned status {response.status_code}")
                 return False
                 
         except ConnectionError:
-            logger.warning("API connection test failed - server unreachable")
+            logger.warning("Connection test failed - server unreachable")
             return False
         except RequestException as e:
-            logger.warning(f"API connection test failed: {str(e)}")
+            logger.warning(f"Connection test failed: {str(e)}")
             return False
-            
-    def _get_headers(self) -> Dict[str, str]:
+     
+    def import_to_label_studio(self, image_path: str, detections: List = None, 
+                           metadata: Optional[Dict] = None,
+                           project_id: int = None) -> Optional[Dict]:
         """
-        Get request headers with authentication
-        
-        Returns:
-            Dict[str, str]: Headers dictionary
-        """
-        headers = {
-            'Content-Type': 'application/json',
-            'User-Agent': 'DefectInspection/1.0',
-        }
-        
-        if self.auth_token:
-            headers['Authorization'] = f'Bearer {self.auth_token}'
-            
-        return headers
-        
-    def upload_result(self, image_path: str, detections: List, 
-                      metadata: Optional[Dict] = None) -> bool:
-        """
-        Upload detection result and image to API server
+        Import an image with pre-annotations to Label Studio for labeling
         
         Args:
             image_path: Path to the image file
-            detections: List of detection results (format: [x1, y1, x2, y2, conf, class_id])
-            metadata: Additional metadata to include
+            detections: Optional list of detections to use as pre-annotations
+            metadata: Optional metadata to include with the task
+            project_id: Label Studio project ID (overrides default project)
             
         Returns:
-            bool: True if upload was successful (or queued), False on error
+            Optional[Dict]: Task data if successful, None otherwise
         """
-        if not self.api_url:
-            logger.debug("No API URL configured, skipping upload")
-            return False
+        if not self.api_url or not self.api_token:
+            logger.warning("API not configured")
+            return None
             
         if not os.path.exists(image_path):
             logger.error(f"Image file not found: {image_path}")
-            return False
+            return None
             
-        # Prepare data
-        data = {
-            'timestamp': time.time(),
-            'image_filename': os.path.basename(image_path),
-            'detections': []
-        }
-        
-        # Add detections to data
-        for det in detections:
-            if len(det) >= 6:  # x1, y1, x2, y2, conf, class_id
-                x1, y1, x2, y2, conf, class_id = det[:6]
-                detection_data = {
-                    'bbox': [float(x1), float(y1), float(x2), float(y2)],
-                    'confidence': float(conf),
-                    'class_id': int(class_id)
-                }
-                
-                # Add class name if available in metadata
-                if metadata and 'class_names' in metadata and int(class_id) < len(metadata['class_names']):
-                    detection_data['class_name'] = metadata['class_names'][int(class_id)]
-                    
-                data['detections'].append(detection_data)
-        
-        # Add metadata if provided
-        if metadata:
-            data['metadata'] = metadata
-            
-        # Upload in background to avoid blocking
         try:
-            return self._upload_data(image_path, data)
-        except Exception as e:
-            logger.error(f"Error starting upload: {str(e)}")
-            return False
+            # Use specified project ID or default
+            active_project_id = project_id or self.project_id
+            if not active_project_id:
+                logger.error("No project ID specified or available")
+                return None
             
-    def _upload_data(self, image_path: str, data: Dict) -> bool:
-        """
-        Perform the actual upload with retries
-        
-        Args:
-            image_path: Path to image file
-            data: JSON data to upload
+            # Get image dimensions for coordinate conversion (needed for annotations)
+            image_width = None
+            image_height = None
+            try:
+                from PIL import Image
+                with Image.open(image_path) as img:
+                    image_width, image_height = img.size
+            except Exception as e:
+                logger.warning(f"Could not get image dimensions: {e}")
+                # Continue anyway - we'll skip annotations if dimensions are missing
             
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not self.api_url:
-            return False
+            # Step 1: Upload image file using multipart form data
+            headers = self._get_headers()
+            # Remove Content-Type from headers for file upload
+            upload_headers = {k: v for k, v in headers.items() if k.lower() != 'content-type'}
             
-        # Prepare multipart form data
-        files = {'image': (os.path.basename(image_path), open(image_path, 'rb'), 'image/jpeg')}
-        payload = {'data': json.dumps(data)}
-        
-        # Try to upload with retries
-        for attempt in range(1, self.max_retries + 1):
+            # Prepare file upload
+            filename = os.path.basename(image_path)
+            files = {
+                'file': (filename, open(image_path, 'rb'), f"image/{self._get_image_mime(filename)}")
+            }
+            
+            # Add metadata as form data
+            form_data = {}
+            if metadata:
+                # Convert metadata to JSON string and add to form data
+                form_data['metadata'] = json.dumps(metadata)
+            
+            # Send the request with file attachment
             try:
                 response = requests.post(
-                    urljoin(self.api_url, "/upload"),
+                    f"{self.api_url}/api/projects/{active_project_id}/import?return_task_ids=true",
+                    headers=upload_headers,
                     files=files,
-                    data=payload,
-                    headers=self._get_headers(),
-                    timeout=self.timeout
+                    data=form_data,
+                    timeout=self.timeout * 2  # Increased timeout for file upload
                 )
-                
-                # Close the file
-                files['image'][1].close()
-                
-                if response.status_code in [200, 201]:
-                    logger.info(f"Upload successful: {os.path.basename(image_path)}")
-                    return True
-                else:
-                    logger.warning(f"Upload failed (attempt {attempt}/{self.max_retries}): "
-                                  f"Status code {response.status_code}")
-                    
-            except (ConnectionError, Timeout) as e:
-                logger.warning(f"Upload connection error (attempt {attempt}/{self.max_retries}): {str(e)}")
-            except RequestException as e:
-                logger.warning(f"Upload request error (attempt {attempt}/{self.max_retries}): {str(e)}")
-            except Exception as e:
-                logger.error(f"Unexpected error during upload: {str(e)}")
-                try:
-                    files['image'][1].close()
-                except:
-                    pass
-                return False
-                
-            # Delay before retry (if not last attempt)
-            if attempt < self.max_retries:
-                time.sleep(self.retry_delay)
-                
-        # Close file if still open after all retries
-        try:
-            if not files['image'][1].closed:
-                files['image'][1].close()
-        except:
-            pass
+            finally:
+                # Close the file handle
+                files['file'][1].close()
             
-        logger.error(f"Upload failed after {self.max_retries} attempts: {os.path.basename(image_path)}")
-        return False
-        
-    def upload_batch(self, batch_data: List[Dict]) -> bool:
+            if response.status_code not in [200, 201]:
+                logger.error(f"Failed to upload image: Status {response.status_code}")
+                if response.text:
+                    logger.error(f"Response: {response.text}")
+                return None
+                
+            # Parse response to get task ID
+            upload_result = response.json()
+            logger.debug(f"Image upload response: {upload_result}")
+            
+            task_id = None
+            if 'task_ids' in upload_result and upload_result['task_ids']:
+                task_id = upload_result['task_ids'][0]
+            
+            if not task_id:
+                logger.error("No task ID returned from image upload")
+                return upload_result  # Return whatever we got
+            
+            logger.info(f"Successfully uploaded image to project {active_project_id}, task ID: {task_id}")
+            
+            # Step 2: If we have detections and dimensions, add annotations to the task
+            if detections and image_width and image_height:
+                annotation_result = self._add_annotations_to_task(
+                    task_id, detections, image_width, image_height
+                )
+                if not annotation_result:
+                    logger.warning("Failed to add annotations to task")
+                
+            # Step 3: Get the full task details with any annotations/metadata
+            # task_response = requests.get(
+            #     f"{self.api_url}/api/tasks/{task_id}/",
+            #     headers=headers,
+            #     timeout=self.timeout
+            # )
+            
+            # if task_response.status_code == 200:
+            #     return task_response.json()
+            # else:
+            #     logger.warning(f"Could not get full task details: Status {task_response.status_code}")
+            #     # Return basic info we have
+            #     return {"id": task_id, "upload_result": upload_result}
+                
+        except Exception as e:
+            logger.error(f"Error importing to Label Studio: {e}")
+            return None
+
+    def _add_annotations_to_task(self, task_id: int, detections: List, 
+                                image_width: int, image_height: int) -> bool:
         """
-        Upload a batch of results without images
+        Add annotations to an existing task
         
         Args:
-            batch_data: List of result dictionaries
+            task_id: Task ID to add annotations to
+            detections: List of detection results (format: [x1, y1, x2, y2, conf, class_id])
+            image_width: Width of the image in pixels
+            image_height: Height of the image in pixels
             
         Returns:
             bool: True if successful, False otherwise
         """
-        if not self.api_url:
-            logger.debug("No API URL configured, skipping batch upload")
+        if not detections:
+            return True  # Nothing to add
+            
+        try:
+            results = []
+            
+            # Create annotation in Label Studio format
+            for i, det in enumerate(detections):
+                if len(det) >= 6:  # x1, y1, x2, y2, conf, class_id
+                    x, y, w, h, conf, class_id = det[:6]
+                    
+                    # Create result based on our labeling config
+                    results.append({
+                        "type": "rectangle",  # rectanglelabels for labeled boxes
+                        "value": {
+                            "x": x,
+                            "y": y,
+                            "width": w,
+                            "height": h,
+                            "rotation": 0,
+                        },
+                        "to_name": "image",
+                        "from_name": "rectangle"
+                    })
+            
+            # Create annotation payload
+            annotation_data = {
+                "result": results
+            }
+            
+            # Submit annotation
+            headers = self._get_headers()
+            response = requests.post(
+                f"{self.api_url}/api/tasks/{task_id}/annotations/",
+                headers=headers,
+                json=annotation_data,
+                timeout=self.timeout
+            )
+            
+            if response.status_code not in [200, 201]:
+                logger.error(f"Failed to add annotations to task: Status {response.status_code}")
+                if response.text:
+                    logger.error(f"Response: {response.text}")
+                return False
+                
+            logger.info(f"Successfully added {len(results)} annotations to task {task_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding annotations to task: {e}")
             return False
             
-        headers = self._get_headers()
+
+    def _get_image_mime(self, filename: str) -> str:
+        """
+        Get the MIME type for an image based on file extension
         
+        Args:
+            filename: Image filename
+            
+        Returns:
+            str: MIME type string
+        """
+        ext = os.path.splitext(filename.lower())[1]
+        if ext == '.jpg' or ext == '.jpeg':
+            return 'jpeg'
+        elif ext == '.png':
+            return 'png'
+        elif ext == '.gif':
+            return 'gif'
+        elif ext == '.bmp':
+            return 'bmp'
+        elif ext == '.webp':
+            return 'webp'
+        else:
+            return 'jpeg'  # Default to JPEG
+    
+    def get_projects(self) -> Dict:
+        """
+        Get list of projects from Label Studio
+        
+        Returns:
+            List[Dict]: List of project dictionaries
+        """
+        if not self.api_url or not self.api_token:
+            logger.warning("API not configured")
+            return {}
+            
         try:
-            response = requests.post(
-                urljoin(self.api_url, "/batch"),
-                json={'batch': batch_data},
+            headers = self._get_headers()
+            response = requests.get(
+                f"{self.api_url}/api/projects/",
                 headers=headers,
                 timeout=self.timeout
             )
             
-            if response.status_code in [200, 201]:
-                logger.info(f"Batch upload successful: {len(batch_data)} items")
-                return True
-            else:
-                logger.error(f"Batch upload failed: Status code {response.status_code}")
+            if response.status_code != 200:
+                logger.error(f"Failed to get projects: Status {response.status_code}")
+                return {}
+                
+            return response.json()
+            
+        except Exception as e:
+            logger.error(f"Error getting projects: {e}")
+            return {}
+            
+    def set_active_project(self, project_id: int) -> bool:
+        """
+        Set active project ID
+        
+        Args:
+            project_id: Project ID to set as active
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.api_url or not self.api_token:
+            logger.warning("API not configured")
+            return False
+            
+        try:
+            # Check if project exists
+            headers = self._get_headers()
+            response = requests.get(
+                f"{self.api_url}/api/projects/{project_id}/",
+                headers=headers,
+                timeout=self.timeout
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Project {project_id} not found: Status {response.status_code}")
                 return False
                 
-        except RequestException as e:
-            logger.error(f"Batch upload error: {str(e)}")
+            # Set as active project
+            self.project_id = project_id
+            logger.info(f"Set active project: {project_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error setting active project: {e}")
             return False
-
+    
+    def get_project_info(self, project_id: Optional[int] = None, filters: Optional[Dict] = None, 
+                 page: int = 1, page_size: int = 100) -> Dict:
+        """
+        Get tasks from a project with optional filtering
+        
+        Args:
+            project_id: Project ID (uses default if None)
+            filters: Optional filters to apply
+            page: Page number for pagination
+            page_size: Number of items per page
+            
+        Returns:
+            List[Dict]: List of task dictionaries
+        """
+        if not self.api_url or not self.api_token:
+            logger.warning("API not configured")
+            return {}
+            
+        try:
+            active_project_id = project_id or self.project_id
+            if not active_project_id:
+                logger.error("No project ID specified or available")
+                return {}
+                
+            headers = self._get_headers()
+            
+            
+            response = requests.get(
+                f"{self.api_url}/api/projects/{active_project_id}",
+                headers=headers,
+                timeout=self.timeout
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to get tasks: Status {response.status_code}")
+                return {}
+                
+            result = response.json()
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting tasks: {e}")
+            return {}
+    
+    def get_task_annotations(self, task_id: int) -> List[Dict]:
+        """
+        Get annotations for a specific task
+        
+        Args:
+            task_id: Task ID to get annotations for
+            
+        Returns:
+            List[Dict]: List of annotation dictionaries
+        """
+        if not self.api_url or not self.api_token:
+            logger.warning("API not configured")
+            return []
+            
+        try:
+            headers = self._get_headers()
+            response = requests.get(
+                f"{self.api_url}/api/tasks/{task_id}/annotations/",
+                headers=headers,
+                timeout=self.timeout
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to get annotations: Status {response.status_code}")
+                return []
+                
+            return response.json()
+            
+        except Exception as e:
+            logger.error(f"Error getting annotations: {e}")
+            return []
+    
     def get_system_status(self) -> Optional[Dict]:
         """
-        Get system status from API
+        Get system status (custom endpoint or Label Studio health check)
         
         Returns:
             Optional[Dict]: Status information or None if failed
@@ -302,128 +581,168 @@ class APIClient:
             
         try:
             headers = self._get_headers()
+            
+            # Try Label Studio health endpoint
             response = requests.get(
-                urljoin(self.api_url, "/system/status"),
+                f"{self.api_url}/health",
                 headers=headers,
                 timeout=self.timeout
             )
             
             if response.status_code == 200:
-                return response.json()
+                # Get active project info if available
+                status_info = {
+                    "status": "online",
+                    "version": "Label Studio",
+                }
+                
+                if self.project_id:
+                    try:
+                        project_response = requests.get(
+                            f"{self.api_url}/api/projects/{self.project_id}/",
+                            headers=headers,
+                            timeout=self.timeout
+                        )
+                        if project_response.status_code == 200:
+                            project_data = project_response.json()
+                            status_info["project"] = project_data.get("title", "Unknown")
+                            status_info["project_id"] = self.project_id
+                            status_info["task_count"] = project_data.get("task_count", 0)
+                    except:
+                        pass
+                
+                return status_info
             else:
-                logger.warning(f"Failed to get system status: Status code {response.status_code}")
+                logger.warning(f"Failed to get system status: Status {response.status_code}")
                 return None
                 
         except RequestException as e:
             logger.warning(f"Error getting system status: {str(e)}")
             return None
     
-    def import_to_label_studio(self, image_path: str, detections: List = None, 
-                              project_id: int = None) -> bool:
+    def get_task_predictions(self, task_id: int) -> List[Dict]:
         """
-        Import an image with pre-annotations to Label Studio for labeling
+        Get predictions for a specific task
         
         Args:
-            image_path: Path to the image file
-            detections: Optional list of detections to use as pre-annotations
-            project_id: Label Studio project ID (required if multiple projects exist)
+            task_id: Task ID to get predictions for
             
         Returns:
-            bool: True if successful, False otherwise
+            List[Dict]: List of prediction dictionaries
         """
-        if not self.label_studio_client:
-            logger.warning("Label Studio client not initialized")
-            return False
-            
-        if not os.path.exists(image_path):
-            logger.error(f"Image file not found: {image_path}")
-            return False
+        if not self.api_url or not self.api_token:
+            logger.warning("API not configured")
+            return []
             
         try:
-            # Find project if ID not specified
-            if not project_id:
-                projects = self.label_studio_client.list_projects()
-                if not projects:
-                    logger.error("No projects found in Label Studio")
-                    return False
-                project_id = projects[0].id
-                logger.debug(f"Using project ID {project_id}")
+            headers = self._get_headers()
+            response = requests.get(
+                f"{self.api_url}/api/tasks/{task_id}/predictions/",
+                headers=headers,
+                timeout=self.timeout
+            )
+            
+            if response.status_code != 200:
+                logger.error(f"Failed to get predictions: Status {response.status_code}")
+                return []
                 
-            # Get project object
-            project = self.label_studio_client.get_project(project_id)
-            
-            # Create task with pre-annotations if detections provided
-            filename = os.path.basename(image_path)
-            task_data = {
-                'image': open(image_path, 'rb'),
-                'filename': filename,
-            }
-            
-            # Add pre-annotations if provided
-            annotations = []
-            if detections:
-                results = []
-                # Create annotation in Label Studio format
-                for i, det in enumerate(detections):
-                    if len(det) >= 6:  # x1, y1, x2, y2, conf, class_id
-                        x1, y1, x2, y2, conf, class_id = det[:6]
-                        
-                        # Convert to relative coordinates that Label Studio expects
-                        # This assumes we know the image dimensions - would need to get this from the image
-                        from PIL import Image
-                        img = Image.open(image_path)
-                        img_width, img_height = img.size
-                        img.close()
-                        
-                        # Convert to normalized coordinates (0-100%)
-                        x1_norm = x1 / img_width * 100
-                        y1_norm = y1 / img_height * 100
-                        width_norm = (x2 - x1) / img_width * 100
-                        height_norm = (y2 - y1) / img_height * 100
-                        
-                        # Create result in Label Studio format
-                        results.append({
-                            "id": f"result_{i+1}",
-                            "type": "rectanglelabels",
-                            "value": {
-                                "x": float(x1_norm),
-                                "y": float(y1_norm),
-                                "width": float(width_norm),
-                                "height": float(height_norm),
-                                "rotation": 0,
-                                "rectanglelabels": [f"class_{int(class_id)}"]
-                            },
-                            "to_name": "image",
-                            "from_name": "label"
-                        })
-                
-                # Create pre-annotation
-                if results:
-                    annotations = [{
-                        "result": results,
-                        "ground_truth": False,
-                        "lead_time": 0,
-                        "was_cancelled": False,
-                        "task": None  # Will be set by Label Studio
-                    }]
-                
-            # Create import storage
-            import_storage = project.create_import_storage("local_files")
-            
-            # Import file
-            import_storage.upload_file(image_path)
-            
-            # Connect storage to project
-            import_storage.sync()
-            
-            logger.info(f"Successfully imported {filename} to Label Studio project {project_id}")
-            return True
+            return response.json()
             
         except Exception as e:
-            logger.error(f"Error importing to Label Studio: {e}")
-            return False
-
+            logger.error(f"Error getting predictions: {e}")
+            return []
+        
     def close(self) -> None:
         """Clean up resources"""
         self.running = False
         logger.debug("API client closed")
+
+
+# test
+# test
+if __name__ == "__main__":
+    # Configure basic logging
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # API configuration
+    api_url = "http://192.168.110.154:8080"
+    api_token = "f8806eb800e1655282702c53e609bbf1f261a996"
+    
+    if not api_token:
+        print("API token is required")
+        exit(1)
+    
+    # Initialize client
+    api_client = APIClient(
+        api_url=api_url,
+        api_token=api_token
+    )
+    
+    # Test connection
+    if api_client.test_connection():
+        print("✓ Connection successful")
+        
+        try:
+            # List projects
+            projects = api_client.get_projects()
+            print(f"Found {projects['count']} projects:")
+            for i, project in enumerate(projects['results']):
+                print(f"  {i+1}. {project.get('title')} (ID: {project.get('id')})")
+            
+            # Select or create test project
+            project_name = "AUTO_LineTest_QC_20250331"
+    
+            project_id = api_client._find_or_create_project(project_name)
+                
+            if project_id:
+                print(f"✓ Using project ID: {project_id}")
+                api_client.set_active_project(project_id)
+                
+                # Get project info
+                project_info = api_client.get_project_info()
+                print(f"Project has {project_info.get('task_number', 0)} tasks")
+                
+                # Upload a test image
+                upload_test = True
+                if upload_test:
+                    test_image = "/home/gtm/defect_inspection/data/images/bus.jpg"
+                    if os.path.exists(test_image):
+                        # Test detections - format [x, y, w, h, confidence, class_id]
+                        detections = [
+                            [30, 40, 20, 30, 0.95, 0],  # scratch
+                            [60, 80, 20, 20, 0.85, 1]   # dent
+                        ]
+                        
+                        # Test metadata
+                        metadata = {
+                            "test_id": "api_test_001",
+                            "timestamp": time.time(),
+                            "source": "API Test Script"
+                        }
+                        
+                        print("Uploading image with detections...")
+                        result = api_client.import_to_label_studio(test_image, detections, metadata)
+                        
+                        if result:
+                            print("✓ Upload successful")
+                            task_id = result.get('id')
+                            if task_id:
+                                print(f"  Task ID: {task_id}")
+                        else:
+                            print("✗ Upload failed")
+                    else:
+                        print(f"Error: File not found: {test_image}")
+            else:
+                print("✗ Failed to find or create project")
+                
+        except Exception as e:
+            print(f"Error in testing: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print("✗ Connection failed")
+    
+    api_client.close()
