@@ -545,105 +545,105 @@ class DefectDisplay:
             self.root = None
 
 # 示例用法
-if __name__ == "__main__":
-    # 配置日志
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+# if __name__ == "__main__":
+#     # 配置日志
+#     logging.basicConfig(
+#         level=logging.INFO,
+#         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+#     )
     
-    # 创建显示界面
-    display = DefectDisplay(window_title="瑕疵检测系统")
+#     # 创建显示界面
+#     display = DefectDisplay(window_title="瑕疵检测系统")
     
-    # 创建测试图像
-    test_img = np.zeros((480, 640, 3), dtype=np.uint8)
-    cv2.putText(test_img, "Loading...", (250, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+#     # 创建测试图像
+#     test_img = np.zeros((480, 640, 3), dtype=np.uint8)
+#     cv2.putText(test_img, "Loading...", (250, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
     
-    # 更新初始图像
-    display.update_image(test_img)
+#     # 更新初始图像
+#     display.update_image(test_img)
     
-    # 启动界面
-    display.start()
+#     # 启动界面
+#     display.start()
     
-    # 模拟检测线程
-    def detection_thread():
-        import random
-        import time
+#     # 模拟检测线程
+#     def detection_thread():
+#         import random
+#         import time
         
-        # 加载测试图像
-        try:
-            test_images = []
-            image_dir = "./test_images"  # 测试图像目录
+#         # 加载测试图像
+#         try:
+#             test_images = []
+#             image_dir = "./test_images"  # 测试图像目录
             
-            # 如果没有测试图像，创建模拟图像
-            if not os.path.exists(image_dir) or len(os.listdir(image_dir)) == 0:
-                for i in range(5):
-                    img = np.zeros((480, 640, 3), dtype=np.uint8)
-                    # 随机添加一些矩形
-                    for _ in range(random.randint(1, 5)):
-                        x1 = random.randint(50, 550)
-                        y1 = random.randint(50, 350)
-                        w = random.randint(30, 100)
-                        h = random.randint(30, 100)
-                        color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-                        cv2.rectangle(img, (x1, y1), (x1 + w, y1 + h), color, -1)
-                    test_images.append(img)
-            else:
-                # 加载目录中的图像
-                for filename in os.listdir(image_dir):
-                    if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-                        img_path = os.path.join(image_dir, filename)
-                        img = cv2.imread(img_path)
-                        if img is not None:
-                            test_images.append(img)
+#             # 如果没有测试图像，创建模拟图像
+#             if not os.path.exists(image_dir) or len(os.listdir(image_dir)) == 0:
+#                 for i in range(5):
+#                     img = np.zeros((480, 640, 3), dtype=np.uint8)
+#                     # 随机添加一些矩形
+#                     for _ in range(random.randint(1, 5)):
+#                         x1 = random.randint(50, 550)
+#                         y1 = random.randint(50, 350)
+#                         w = random.randint(30, 100)
+#                         h = random.randint(30, 100)
+#                         color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+#                         cv2.rectangle(img, (x1, y1), (x1 + w, y1 + h), color, -1)
+#                     test_images.append(img)
+#             else:
+#                 # 加载目录中的图像
+#                 for filename in os.listdir(image_dir):
+#                     if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
+#                         img_path = os.path.join(image_dir, filename)
+#                         img = cv2.imread(img_path)
+#                         if img is not None:
+#                             test_images.append(img)
             
-            # 如果没有图像，创建一个默认图像
-            if not test_images:
-                img = np.ones((480, 640, 3), dtype=np.uint8) * 128
-                cv2.putText(img, "No Test Images", (200, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-                test_images.append(img)
+#             # 如果没有图像，创建一个默认图像
+#             if not test_images:
+#                 img = np.ones((480, 640, 3), dtype=np.uint8) * 128
+#                 cv2.putText(img, "No Test Images", (200, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+#                 test_images.append(img)
                 
-            # 模拟检测循环
-            while display.running:
-                # 随机选择一张图像
-                img = random.choice(test_images).copy()
+#             # 模拟检测循环
+#             while display.running:
+#                 # 随机选择一张图像
+#                 img = random.choice(test_images).copy()
                 
-                # 随机生成一些检测结果
-                if random.random() < 0.7:  # 70%概率有缺陷
-                    num_defects = random.randint(1, 3)
-                    detections = []
+#                 # 随机生成一些检测结果
+#                 if random.random() < 0.7:  # 70%概率有缺陷
+#                     num_defects = random.randint(1, 3)
+#                     detections = []
                     
-                    for _ in range(num_defects):
-                        x1 = random.randint(50, 550)
-                        y1 = random.randint(50, 350)
-                        w = random.randint(30, 100)
-                        h = random.randint(30, 100)
-                        conf = random.uniform(0.7, 0.98)
-                        class_id = random.randint(0, 4)
+#                     for _ in range(num_defects):
+#                         x1 = random.randint(50, 550)
+#                         y1 = random.randint(50, 350)
+#                         w = random.randint(30, 100)
+#                         h = random.randint(30, 100)
+#                         conf = random.uniform(0.7, 0.98)
+#                         class_id = random.randint(0, 4)
                         
-                        detections.append([x1, y1, x1 + w, y1 + h, conf, class_id])
+#                         detections.append([x1, y1, x1 + w, y1 + h, conf, class_id])
                         
-                    # 更新图像和检测结果
-                    display.update_image(img, detections)
-                    display.set_status(f"检测完成，发现{len(detections)}个缺陷")
-                else:
-                    # 无缺陷
-                    display.update_image(img, [])
-                    display.set_status("检测完成，未发现缺陷")
+#                     # 更新图像和检测结果
+#                     display.update_image(img, detections)
+#                     display.set_status(f"检测完成，发现{len(detections)}个缺陷")
+#                 else:
+#                     # 无缺陷
+#                     display.update_image(img, [])
+#                     display.set_status("检测完成，未发现缺陷")
                 
-                # 随机等待时间
-                time.sleep(random.uniform(1.0, 3.0))
+#                 # 随机等待时间
+#                 time.sleep(random.uniform(1.0, 3.0))
                 
-        except Exception as e:
-            logger.error(f"模拟检测线程出错: {e}")
-            display.set_status(f"检测错误: {e}", is_error=True)
+#         except Exception as e:
+#             logger.error(f"模拟检测线程出错: {e}")
+#             display.set_status(f"检测错误: {e}", is_error=True)
     
-    # 启动模拟检测线程
-    thread = threading.Thread(target=detection_thread, daemon=True)
-    thread.start()
+#     # 启动模拟检测线程
+#     thread = threading.Thread(target=detection_thread, daemon=True)
+#     thread.start()
     
-    # 运行主界面
-    display.run()
+#     # 运行主界面
+#     display.run()
     
-    # 清理
-    display.close()
+#     # 清理
+#     display.close()

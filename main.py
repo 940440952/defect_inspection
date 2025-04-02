@@ -13,7 +13,7 @@ from datetime import datetime
 
 # Import our modules
 from src.camera import CameraManager
-from src.conveyor import ConveyorController
+from src.io_controller import ConveyorController
 from src.detector import YOLODetector
 from src.display import DisplayManager
 from src.api_client import APIClient
