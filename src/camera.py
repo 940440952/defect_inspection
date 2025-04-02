@@ -9,7 +9,7 @@ from datetime import datetime
 from ctypes import *
 
 # Add path for camera SDK
-sys.path.append("./dependencies/MvImport")
+sys.path.append("../dependencies/MvImport")
 from MvCameraControl_class import *
 
 logger = logging.getLogger("DefectInspection.Camera")
@@ -213,3 +213,15 @@ class CameraManager:
         self.close_camera()
         if self.is_initialized:
             MvCamera.MV_CC_Finalize()
+
+# test
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
+    camera = CameraManager(device_index=0)
+    if camera.open_camera():
+        image, path = camera.capture_image(return_array=True, save_path="test_image.jpg")
+        if image is not None:
+            print(f"Captured image shape: {image.shape}")
+        camera.close_camera()
+    else:
+        print("Failed to open camera")

@@ -19,20 +19,18 @@ from typing import Dict, List, Optional, Tuple, Union, Any
 logger = logging.getLogger("DefectInspection.APIClient")
 
 class APIClient:
-    """
-    API client for managing detection results and images using Label Studio as backend.
-    Supports uploading images, creating annotations, and managing project data.
-    """
-    
     def __init__(self, api_url: str, api_token: str = "", 
-                 timeout: int = 10, max_retries: int = 3, 
-                 retry_delay: int = 5):
+             line_name: str = "LineTest", product_type: str = "QC",
+             timeout: int = 10, max_retries: int = 3, 
+             retry_delay: int = 5):
         """
         Initialize API client with Label Studio as backend
         
         Args:
             api_url: Base URL for Label Studio instance
             api_token: API token for Label Studio access
+            line_name: Production line name (used in project naming)
+            product_type: Product type being inspected (used in project naming)
             timeout: Request timeout in seconds
             max_retries: Maximum number of retry attempts
             retry_delay: Delay between retries in seconds
@@ -47,16 +45,71 @@ class APIClient:
         self.upload_thread = None
         self.running = False
         self.project_id = None
+        self.line_name = line_name
+        self.product_type = product_type
+        
+        # Configure logging if not already configured
+        if not logging.getLogger().handlers:
+            logging.basicConfig(
+                level=logging.INFO,
+                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
         
         # Initialize connection if URL and token provided
         if self.api_url and self.api_token:
             try:
-                project_id = self._init_connection("Defect Inspection")
+                logger.info(f"Connecting to Label Studio API at {self.api_url}")
+                
+                # Test connection
+                if not self.test_connection():
+                    logger.error("Failed to connect to Label Studio API")
+                    return
+                    
+                logger.info("Connection to Label Studio successful")
+                
+                # List available projects
+                try:
+                    projects = self.get_projects()
+                    project_count = projects.get('count', 0)
+                    logger.info(f"Found {project_count} projects in Label Studio")
+                except Exception as e:
+                    logger.error(f"Failed to list projects: {e}")
+                    projects = {'results': []}
+                
+                # Generate standard project name
+                # Format: AUTO_{line_name}_{product_type}
+                project_name = f"AUTO_{self.line_name}_{self.product_type}"
+                logger.info(f"Using project name: {project_name}")
+                
+                # Find existing project or create new one
+                project_id = None
+                
+                # First try to find existing project with this name
+                for project in projects.get('results', []):
+                    if project.get('title') == project_name:
+                        project_id = project.get('id')
+                        logger.info(f"Found existing project: {project_name} (ID: {project_id})")
+                        break
+                
+                # Create project if not found
+                if not project_id:
+                    logger.info(f"Project '{project_name}' not found, creating new project")
+                    project_id = self._find_or_create_project(project_name)
+                    
                 if project_id:
                     self.project_id = project_id
-                    logger.info(f"Using project ID: {self.project_id}")
+                    self.set_active_project(project_id)
+                    logger.info(f"Using project: {project_name} (ID: {self.project_id})")
+                    
+                    # Get project info to log task count
+                    try:
+                        project_info = self.get_project_info()
+                        task_count = project_info.get('task_number', 0)
+                        logger.info(f"Project has {task_count} tasks")
+                    except Exception as e:
+                        logger.warning(f"Could not get project info: {e}")
                 else:
-                    logger.error("Failed to initialize Label Studio connection")
+                    logger.error(f"Failed to initialize project: {project_name}")
             except Exception as e:
                 logger.error(f"Failed to initialize connection: {e}")
         
@@ -222,7 +275,7 @@ class APIClient:
      
     def import_to_label_studio(self, image_path: str, detections: List = None, 
                            metadata: Optional[Dict] = None,
-                           project_id: int = None) -> Optional[Dict]:
+                           project_id: int = None) -> bool:
         """
         Import an image with pre-annotations to Label Studio for labeling
         
@@ -318,24 +371,12 @@ class APIClient:
                 )
                 if not annotation_result:
                     logger.warning("Failed to add annotations to task")
-                
-            # Step 3: Get the full task details with any annotations/metadata
-            # task_response = requests.get(
-            #     f"{self.api_url}/api/tasks/{task_id}/",
-            #     headers=headers,
-            #     timeout=self.timeout
-            # )
             
-            # if task_response.status_code == 200:
-            #     return task_response.json()
-            # else:
-            #     logger.warning(f"Could not get full task details: Status {task_response.status_code}")
-            #     # Return basic info we have
-            #     return {"id": task_id, "upload_result": upload_result}
+            return True
                 
         except Exception as e:
             logger.error(f"Error importing to Label Studio: {e}")
-            return None
+            return False
 
     def _add_annotations_to_task(self, task_id: int, detections: List, 
                                 image_width: int, image_height: int) -> bool:
@@ -659,90 +700,49 @@ class APIClient:
 
 
 # test
-# test
-if __name__ == "__main__":
-    # Configure basic logging
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+# if __name__ == "__main__":
+#     # Configure basic logging
+#     logging.basicConfig(
+#         level=logging.DEBUG,
+#         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+#     )
     
-    # API configuration
-    api_url = "http://192.168.110.154:8080"
-    api_token = "f8806eb800e1655282702c53e609bbf1f261a996"
+#     # 从配置中读取必要参数
+#     config = {
+#         "api_url": "http://192.168.110.154:8080",
+#         "api_token": "f8806eb800e1655282702c53e609bbf1f261a996",
+#         "line_name": "Line01",
+#         "product_type": "Smartphone"
+#     }
+
+#     # 初始化 API 客户端
+#     api_client = APIClient(
+#         api_url=config["api_url"],
+#         api_token=config["api_token"],
+#         line_name=config["line_name"],
+#         product_type=config["product_type"]
+#     )
+
+#     # API 客户端已经初始化完成，包括项目查询和创建
+#     # 现在可以直接使用它来上传图像和标注
+
+#     # 上传图像示例
+#     image_path = "/home/gtm/defect_inspection/data/images/bus.jpg"
+#     detections = [
+#         [30, 40, 20, 30, 0.95, 0],  # scratch - x, y, width, height, confidence, class_id
+#         [60, 80, 20, 20, 0.85, 1]   # dent
+#     ]
+#     metadata = {
+#         "timestamp": time.time(),
+#         "batch_id": "BATCH_2025_03_31",
+#         "camera_id": "CAM_01"
+#     }
+
+#     result = api_client.import_to_label_studio(image_path, detections, metadata)
+#     if result:
+#         print(f"Successfully uploaded image with {len(detections)} detections")
+#     else:
+#         print("Failed to upload image")
+
     
-    if not api_token:
-        print("API token is required")
-        exit(1)
-    
-    # Initialize client
-    api_client = APIClient(
-        api_url=api_url,
-        api_token=api_token
-    )
-    
-    # Test connection
-    if api_client.test_connection():
-        print("✓ Connection successful")
-        
-        try:
-            # List projects
-            projects = api_client.get_projects()
-            print(f"Found {projects['count']} projects:")
-            for i, project in enumerate(projects['results']):
-                print(f"  {i+1}. {project.get('title')} (ID: {project.get('id')})")
-            
-            # Select or create test project
-            project_name = "AUTO_LineTest_QC_20250331"
-    
-            project_id = api_client._find_or_create_project(project_name)
-                
-            if project_id:
-                print(f"✓ Using project ID: {project_id}")
-                api_client.set_active_project(project_id)
-                
-                # Get project info
-                project_info = api_client.get_project_info()
-                print(f"Project has {project_info.get('task_number', 0)} tasks")
-                
-                # Upload a test image
-                upload_test = True
-                if upload_test:
-                    test_image = "/home/gtm/defect_inspection/data/images/bus.jpg"
-                    if os.path.exists(test_image):
-                        # Test detections - format [x, y, w, h, confidence, class_id]
-                        detections = [
-                            [30, 40, 20, 30, 0.95, 0],  # scratch
-                            [60, 80, 20, 20, 0.85, 1]   # dent
-                        ]
-                        
-                        # Test metadata
-                        metadata = {
-                            "test_id": "api_test_001",
-                            "timestamp": time.time(),
-                            "source": "API Test Script"
-                        }
-                        
-                        print("Uploading image with detections...")
-                        result = api_client.import_to_label_studio(test_image, detections, metadata)
-                        
-                        if result:
-                            print("✓ Upload successful")
-                            task_id = result.get('id')
-                            if task_id:
-                                print(f"  Task ID: {task_id}")
-                        else:
-                            print("✗ Upload failed")
-                    else:
-                        print(f"Error: File not found: {test_image}")
-            else:
-                print("✗ Failed to find or create project")
-                
-        except Exception as e:
-            print(f"Error in testing: {e}")
-            import traceback
-            traceback.print_exc()
-    else:
-        print("✗ Connection failed")
-    
-    api_client.close()
+#     api_client.close()
