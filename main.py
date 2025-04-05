@@ -1,385 +1,331 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+瑕疵检测系统主程序
+
+系统流程:
+1. 位置传感器检测到产品到达检测区域
+2. 控制传送带停止运行
+3. 摄像头捕获产品图像
+4. YOLO模型进行瑕疵检测
+5. 照片和检测结果上传服务器
+6. 根据检测结果决定是否激活剔除机构
+7. 重启传送带，继续下一个产品的检测
+"""
 
 import os
 import sys
 import time
-import json
-import signal
 import logging
 import argparse
 import threading
+import cv2
+import numpy as np
 from datetime import datetime
 
-# Import our modules
-from src.camera import CameraManager
-from src.io_controller import ConveyorController
+# 导入项目模块
+from src.utils import setup_logging, load_config, get_timestamp, ensure_directory_exists
+from src.io_controller import IOController, IOMode
 from src.detector import YOLODetector
-from src.display import DisplayManager
 from src.api_client import APIClient
-from src.utils import setup_logging, load_config
+from src.display import DisplayInterface
 
-# Global control flags
+# 全局变量
+config = None
+io_controller = None
+camera = None
+detector = None
+api_client = None
+display = None
+logger = None
 running = True
-stats = {
-    "total_inspections": 0, # Total inspections performed
-    "defects_found": 0, # Total defects found
-    "ejections": 0, # Total number of defect ejections performed by the system
-    "start_time": time.time()
-}
+inspection_lock = threading.Lock()
 
-def signal_handler(sig, frame):
-    """Handle Ctrl+C gracefully"""
+def initialize_system(config_path):
+    """初始化系统组件"""
+    global config, io_controller, camera, detector, api_client, display, logger
+    
+    # 加载配置
+    config = load_config(config_path)
+    
+    # 设置日志
+    log_dir = config.get("log_dir", "logs")
+    ensure_directory_exists(log_dir)
+    log_file = os.path.join(log_dir, f"defect_inspection_{get_timestamp()}.log")
+    log_level = getattr(logging, config.get("log_level", "INFO").upper())
+    logger = setup_logging(level=log_level, log_file=log_file)
+    logger.info("系统初始化中...")
+    
+    # 初始化IO控制器
+    io_mode = IOMode.GPIO if config.get("use_gpio", True) else IOMode.SIMULATE
+    io_controller = IOController(
+        mode=io_mode,
+        position_sensor_pin=config.get("pins", {}).get("position_sensor", 18),
+        conveyor_control_pin=config.get("pins", {}).get("conveyor_control", 23),
+        rejector_control_pin=config.get("pins", {}).get("rejector_control", 24)
+    )
+    
+    # 初始化摄像头
+    camera_id = config.get("camera", {}).get("device_id", 0)
+    camera = cv2.VideoCapture(camera_id)
+    camera_width = config.get("camera", {}).get("width", 1280)
+    camera_height = config.get("camera", {}).get("height", 720)
+    camera.set(cv2.CAP_PROP_FRAME_WIDTH, camera_width)
+    camera.set(cv2.CAP_PROP_FRAME_HEIGHT, camera_height)
+    
+    if not camera.isOpened():
+        logger.error(f"无法打开摄像头 (ID: {camera_id})")
+        sys.exit(1)
+    
+    # 初始化YOLO检测器
+    detector = YOLODetector(
+        model_name=config.get("detector", {}).get("model_name", "yolov11n"),
+        conf_thresh=config.get("detector", {}).get("conf_threshold", 0.25),
+        nms_thresh=config.get("detector", {}).get("nms_threshold", 0.45),
+        models_dir=config.get("detector", {}).get("models_dir", "../models"),
+        use_dla=config.get("detector", {}).get("use_dla", True)
+    )
+    
+    # 初始化API客户端
+    api_client = APIClient(
+        api_url=config.get("api", {}).get("url", "http://localhost:8080"),
+        api_token=config.get("api", {}).get("token", ""),
+        line_name=config.get("api", {}).get("line_name", "LineTest"),
+        product_type=config.get("api", {}).get("product_type", "QC")
+    )
+    
+    # 初始化显示界面 (如果需要)
+    if not config.get("no_display", False):
+        display = DisplayInterface()
+        display.start()
+    
+    # 注册位置传感器回调
+    io_controller.register_position_callback(product_detected_callback)
+    
+    logger.info("系统初始化完成")
+
+def product_detected_callback():
+    """位置传感器检测到产品的回调函数"""
     global running
-    print("\nShutting down...")
-    running = False
-
-def parse_arguments():
-    """Parse command line arguments"""
-    parser = argparse.ArgumentParser(description='Defect Inspection System')
-    parser.add_argument('--config', type=str, default='config/settings.json',
-                        help='Path to configuration file')
-    parser.add_argument('--model', type=str, help='Override model path')
-    parser.add_argument('--api-url', type=str, help='Override API URL')
-    parser.add_argument('--debug', action='store_true', help='Enable debug logging') # Debug flag
-    parser.add_argument('--no-display', action='store_true', help='Disable display') # Disable display flag
-    parser.add_argument('--no-ejection', action='store_true', help='Disable defect ejection')
-    parser.add_argument('--test-ejector', action='store_true', help='Test ejector functionality')
-    return parser.parse_args()
-
-def display_statistics(logger):
-    """Display system statistics"""
-    global stats
     
-    runtime = time.time() - stats["start_time"]
-    hours = int(runtime / 3600)
-    minutes = int((runtime % 3600) / 60)
-    seconds = int(runtime % 60)
+    if not running:
+        return
     
-    if stats["total_inspections"] > 0:
-        defect_rate = (stats["defects_found"] / stats["total_inspections"]) * 100
-        ejection_rate = (stats["ejections"] / stats["total_inspections"]) * 100
-    else:
-        defect_rate = 0
-        ejection_rate = 0
-    
-    logger.info(f"System Statistics:")
-    logger.info(f"  Runtime: {hours:02d}:{minutes:02d}:{seconds:02d}")
-    logger.info(f"  Inspections: {stats['total_inspections']}")
-    logger.info(f"  Defects found: {stats['defects_found']} ({defect_rate:.1f}%)")
-    logger.info(f"  Ejections: {stats['ejections']} ({ejection_rate:.1f}%)")
-    
-    if stats["total_inspections"] > 0:
-        throughput = stats["total_inspections"] / (runtime / 3600)
-        logger.info(f"  Throughput: {throughput:.1f} units/hour")
-
-def main():
-    # Parse arguments
-    args = parse_arguments()
-    
-    # Load configuration
-    config = load_config(args.config)
-    
-    # Set up logging
-    log_level = logging.DEBUG if args.debug else logging.INFO
-    logger = setup_logging(log_level)
-    logger.info("Starting Defect Inspection System")
-    
-    # Override config with command line arguments
-    if args.model:
-        config['model_path'] = args.model
-    if args.api_url:
-        config['api_url'] = args.api_url
-    
-    # Register signal handler for graceful shutdown
-    signal.signal(signal.SIGINT, signal_handler)
+    # 使用锁防止重复处理
+    if not inspection_lock.acquire(blocking=False):
+        logger.debug("检测流程正在进行，忽略传感器触发")
+        return
     
     try:
-        # Initialize components
-        logger.info("Initializing system components...")
+        logger.info("检测到产品进入检测区域")
         
-        # Initialize camera
-        camera = CameraManager(config.get('camera_index', 0))
+        # 步骤1和2：已由传感器检测和回调触发
         
-        # Initialize conveyor controller with ejector pin
-        conveyor = ConveyorController(
-            enable_pin=config.get('enable_pin', 17),
-            direction_pin=config.get('direction_pin', 27),
-            pulse_pin=config.get('pulse_pin', 22),
-            sensor_pin=config.get('sensor_pin', 23),
-            emergency_stop_pin=config.get('emergency_stop_pin', 24)
-        )
+        # 步骤2：停止传送带
+        io_controller.stop_conveyor()
+        logger.info("传送带已停止")
         
-        # Add ejector control
-        ejector_pin = config.get('ejector_pin', 25)
-        ejector_active_high = config.get('ejector_active_high', True)
+        # 等待传送带完全停止
+        time.sleep(config.get("timings", {}).get("conveyor_stop_delay", 0.5))
         
-        # Set up ejector pin
-        try:
-            import RPi.GPIO as GPIO
-            GPIO.setup(ejector_pin, GPIO.OUT, initial=GPIO.LOW if ejector_active_high else GPIO.HIGH)
-            logger.info(f"Ejector configured on pin {ejector_pin} (active {'high' if ejector_active_high else 'low'})")
-            
-            # Add ejector method to conveyor controller
-            def eject_defect(delay=0, duration=0.5):
-                """Activate ejector after delay"""
-                def _eject():
-                    time.sleep(delay)
-                    logger.debug(f"Activating ejector for {duration}s")
-                    GPIO.output(ejector_pin, GPIO.HIGH if ejector_active_high else GPIO.LOW)
-                    time.sleep(duration)
-                    GPIO.output(ejector_pin, GPIO.LOW if ejector_active_high else GPIO.HIGH)
-                    logger.debug("Ejector deactivated")
-                    stats["ejections"] += 1
-                
-                # Run ejector in separate thread to avoid blocking
-                thread = threading.Thread(target=_eject)
-                thread.daemon = True
-                thread.start()
-                return True
-            
-            # Attach method to conveyor controller
-            conveyor.eject_defect = eject_defect
-            
-        except (ImportError, NameError):
-            # Mock ejector for development environments
-            logger.warning("GPIO not available, using simulated ejector")
-            def mock_eject_defect(delay=0, duration=0.5):
-                def _mock_eject():
-                    time.sleep(delay)
-                    logger.info(f"[SIMULATION] Ejector activated for {duration}s")
-                    time.sleep(duration)
-                    logger.info("[SIMULATION] Ejector deactivated")
-                    stats["ejections"] += 1
-                
-                thread = threading.Thread(target=_mock_eject)
-                thread.daemon = True
-                thread.start()
-                return True
-            
-            conveyor.eject_defect = mock_eject_defect
+        # 步骤3：捕获图像
+        success, image = capture_image()
+        if not success:
+            logger.error("图像捕获失败，继续下一个产品")
+            restart_conveyor()
+            return
         
-        # Test ejector if requested
-        if args.test_ejector:
-            logger.info("Testing ejector functionality...")
-            conveyor.eject_defect(delay=0.5, duration=1.0)
-            time.sleep(2)  # Wait for ejector test to complete
+        # 步骤4：执行瑕疵检测
+        detection_results = run_detection(image)
         
-        # Initialize YOLO detector
-        detector = YOLODetector(
-            model_path=config.get('model_path', 'models/defect_model.onnx'),
-            conf_thresh=config.get('confidence_threshold', 0.25)
-        )
+        # 保存图像和结果
+        save_dir = config.get("storage", {}).get("save_dir", "images")
+        ensure_directory_exists(save_dir)
+        timestamp = get_timestamp()
+        image_path = os.path.join(save_dir, f"img_{timestamp}.jpg")
+        cv2.imwrite(image_path, image)
         
-        # Initialize display if not disabled
-        display = None
-        if not args.no_display:
-            try:
-                display = DisplayManager(
-                    window_name=config.get('window_name', 'Defect Inspection'),
-                    fullscreen=config.get('fullscreen', False),
-                    resolution=config.get('display_resolution', (1920, 1080))
-                )
-                logger.info("Display initialized")
-            except Exception as e:
-                logger.error(f"Failed to initialize display: {e}")
-                display = None
+        # 更新显示界面
+        if display:
+            display.update_display(image, detection_results)
         
-        # Initialize API client
-        api_client = None
-        if config.get('api_url'):
-            api_client = APIClient(
-                api_url=config.get('api_url'),
-                auth_token=config.get('auth_token', '')
-            )
-            logger.info(f"API client initialized with endpoint: {config.get('api_url')}")
+        # 步骤5：上传结果到服务器
+        upload_results(image, detection_results, image_path)
         
-        logger.info("System initialized, starting inspection loop")
+        # 步骤6：根据检测结果决定是否剔除
+        has_defect = process_detection_results(detection_results)
+        if has_defect:
+            logger.info("检测到瑕疵，激活剔除机构")
+            ejection_duration = config.get("ejector", {}).get("duration", 0.5)
+            io_controller.activate_rejector(ejection_duration)
         
-        # Create output directory if it doesn't exist
-        output_dir = config.get('output_dir', 'data/images')
-        os.makedirs(output_dir, exist_ok=True)
+        # 等待处理完成
+        time.sleep(config.get("timings", {}).get("processing_delay", 1.0))
         
-        # Start conveyor
-        conveyor.start(config.get('conveyor_speed', 50))
+        # 步骤7：重启传送带，继续检测下一个产品
+        restart_conveyor()
         
-        # Ejection settings
-        ejection_enabled = not args.no_ejection and config.get('ejection_enabled', True)
-        ejection_threshold = config.get('ejection_threshold', 0.5)
-        ejection_delay = config.get('ejection_delay', 1.0)  # Delay before ejection in seconds
-        ejection_duration = config.get('ejection_duration', 0.5)  # Duration of ejection signal
+    except Exception as e:
+        logger.exception(f"产品检测过程中发生错误: {str(e)}")
+        # 确保传送带重新启动
+        restart_conveyor()
+    finally:
+        # 释放锁
+        inspection_lock.release()
+
+def capture_image():
+    """从摄像头捕获图像"""
+    # 连续捕获几帧丢弃，确保获取最新图像
+    for _ in range(3):
+        camera.read()
+    
+    # 捕获实际使用的图像
+    success, frame = camera.read()
+    if not success:
+        logger.error("无法从摄像头捕获图像")
+        return False, None
+    
+    logger.debug("成功捕获产品图像")
+    return True, frame
+
+def run_detection(image):
+    """运行YOLO检测"""
+    try:
+        start_time = time.time()
+        detections = detector.detect(image)
+        elapsed = time.time() - start_time
         
-        if ejection_enabled:
-            logger.info(f"Defect ejection enabled (threshold: {ejection_threshold}, delay: {ejection_delay}s)")
+        logger.info(f"检测完成，耗时 {elapsed:.3f} 秒, 发现 {len(detections)} 个瑕疵")
+        return detections
+    
+    except Exception as e:
+        logger.exception(f"检测过程中发生错误: {str(e)}")
+        return []
+
+def upload_results(image, detection_results, image_path):
+    """上传检测结果到服务器"""
+    try:
+        # 创建要上传的数据
+        metadata = {
+            "timestamp": datetime.now().isoformat(),
+            "detections": len(detection_results),
+            "has_defect": len(detection_results) > 0,
+            "image_path": image_path,
+        }
+        
+        # 如果有检测结果，添加更多详细信息
+        if detection_results and len(detection_results) > 0:
+            defects = []
+            for det in detection_results:
+                if len(det) >= 6:
+                    x1, y1, x2, y2, conf, class_id = det[:6]
+                    defects.append({
+                        "class_id": int(class_id),
+                        "confidence": float(conf),
+                        "bbox": [float(x1), float(y1), float(x2), float(y2)]
+                    })
+            metadata["defects"] = defects
+        
+        # 上传到服务器
+        success = api_client.upload_inspection_result(image, metadata)
+        if success:
+            logger.info("成功上传检测结果到服务器")
         else:
-            logger.info("Defect ejection disabled")
-        
-        # Statistics timer
-        last_stats_time = time.time()
-        stats_interval = config.get('stats_interval', 3600)  # Default: show stats every hour
-        
-        # Main inspection loop
-        while running:
-            # Display periodic statistics
-            if time.time() - last_stats_time > stats_interval:
-                display_statistics(logger)
-                last_stats_time = time.time()
-            
-            # Check if a product is detected
-            if conveyor.is_product_detected():
-                logger.info("Product detected, stopping conveyor")
-                
-                # Stop the conveyor
-                conveyor.stop()
-                
-                # Wait for conveyor to fully stop and product to stabilize
-                time.sleep(config.get('stop_delay', 0.5))
-                
-                # Capture image
-                logger.info("Capturing image")
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                image_filename = f"{output_dir}/capture_{timestamp}.jpg"
-                image, saved_path = camera.capture_image(save_path=image_filename)
-                
-                if image is None:
-                    logger.error("Failed to capture image")
-                    conveyor.start(config.get('conveyor_speed', 50))
-                    continue
-                
-                # Run detection
-                logger.info("Running defect detection")
-                detection_start = time.time()
-                detections = detector.detect(image)
-                detection_time = (time.time() - detection_start) * 1000
-                logger.info(f"Detection completed in {detection_time:.2f}ms, found {len(detections)} defects")
-                
-                # Update statistics
-                stats["total_inspections"] += 1
-                if detections:
-                    stats["defects_found"] += 1
-                
-                # Create metadata
-                metadata = {
-                    'timestamp': timestamp,
-                    'detection_time_ms': detection_time,
-                    'product_id': f"PROD_{timestamp}",
-                    'system_info': {
-                        'device': 'Jetson Orin NX',
-                        'software_version': config.get('version', '1.0')
-                    },
-                    'has_defects': len(detections) > 0,
-                    'defects_count': len(detections)
-                }
-                
-                # Add defect details to metadata
-                if detections:
-                    defect_details = []
-                    for i, det in enumerate(detections):
-                        x1, y1, x2, y2, conf, class_id = det
-                        class_name = detector.class_names[int(class_id)] if class_id < len(detector.class_names) else f"unknown_{class_id}"
-                        defect_details.append({
-                            'id': i,
-                            'bbox': [int(x1), int(y1), int(x2), int(y2)],
-                            'confidence': float(conf),
-                            'class_id': int(class_id),
-                            'class_name': class_name
-                        })
-                    metadata['defects'] = defect_details
-                
-                # Upload results to API in a separate thread to avoid blocking
-                if api_client and saved_path:
-                    upload_thread = threading.Thread(
-                        target=api_client.upload_result,
-                        args=(saved_path, detections, metadata)
-                    )
-                    upload_thread.daemon = True
-                    upload_thread.start()
-                    logger.debug(f"Started upload thread for image {os.path.basename(saved_path)}")
-                
-                # Display results
-                if display and image is not None:
-                    # Draw defects on the image
-                    display_image = detector.draw_detections(image, detections) if detections else image.copy()
-                    
-                    # Add status overlay
-                    status_text = []
-                    status_text.append(f"Product ID: PROD_{timestamp}")
-                    status_text.append(f"Defects: {len(detections)}")
-                    if len(detections) > 0:
-                        max_conf = max([det[4] for det in detections])
-                        status_text.append(f"Max confidence: {max_conf:.2f}")
-                        status_text.append(f"Ejection: {'YES' if max_conf >= ejection_threshold else 'NO'}")
-                    
-                    display.show_image_with_overlay(display_image, status_text)
-                    
-                    # Wait for display time (if configured)
-                    display_time = config.get('display_time', 2.0)
-                    if display_time > 0:
-                        start_wait = time.time()
-                        while time.time() - start_wait < display_time and running:
-                            key = display.process_keys()
-                            if key == 27:  # ESC key
-                                running = False
-                                break
-                            time.sleep(0.01)
-                
-                # Handle defect ejection
-                if ejection_enabled and detections:
-                    # Check if any defect has high enough confidence
-                    should_eject = False
-                    max_confidence = 0.0
-                    
-                    for det in detections:
-                        confidence = det[4] if len(det) > 4 else 0.0
-                        max_confidence = max(max_confidence, confidence)
-                        if confidence >= ejection_threshold:
-                            should_eject = True
-                            break
-                    
-                    if should_eject:
-                        logger.info(f"Defect detected with confidence {max_confidence:.2f}, scheduling ejection")
-                        # Schedule ejection after delay
-                        conveyor.eject_defect(delay=ejection_delay, duration=ejection_duration)
-                    else:
-                        logger.info(f"Defect confidence {max_confidence:.2f} below threshold, not ejecting")
-                
-                # Restart conveyor
-                logger.info("Restarting conveyor")
-                conveyor.start(config.get('conveyor_speed', 50))
-            
-            # Small delay to prevent CPU overuse
-            time.sleep(0.01)
+            logger.warning("上传检测结果到服务器失败")
             
     except Exception as e:
-        logger.exception(f"Error in main loop: {e}")
+        logger.exception(f"上传结果时发生错误: {str(e)}")
+
+def process_detection_results(detection_results):
+    """处理检测结果，决定是否需要剔除"""
+    # 检查是否有任何瑕疵
+    if not detection_results or len(detection_results) == 0:
+        logger.info("未检测到瑕疵")
+        return False
+    
+    # 获取剔除阈值
+    conf_threshold = config.get("ejector", {}).get("confidence_threshold", 0.4)
+    
+    # 查找置信度最高的瑕疵
+    max_conf = 0.0
+    for det in detection_results:
+        if len(det) >= 5:
+            conf = float(det[4])
+            max_conf = max(max_conf, conf)
+    
+    # 决定是否剔除
+    should_eject = max_conf >= conf_threshold
+    logger.info(f"最高置信度: {max_conf:.3f}, 阈值: {conf_threshold}, 剔除: {should_eject}")
+    return should_eject
+
+def restart_conveyor():
+    """重新启动传送带"""
+    try:
+        io_controller.start_conveyor()
+        logger.info("传送带已重新启动")
+    except Exception as e:
+        logger.error(f"重启传送带失败: {str(e)}")
+
+def cleanup():
+    """清理资源"""
+    global running
+    
+    running = False
+    logger.info("正在清理资源...")
+    
+    # 停止IO控制器
+    if io_controller:
+        io_controller.close()
+    
+    # 释放摄像头
+    if camera:
+        camera.release()
+    
+    # 关闭显示界面
+    if display:
+        display.stop()
+    
+    logger.info("系统已关闭")
+
+def main():
+    """主函数"""
+    global running
+    
+    # 解析命令行参数
+    parser = argparse.ArgumentParser(description="瑕疵检测系统")
+    parser.add_argument("--config", type=str, default="config.json", help="配置文件路径")
+    parser.add_argument("--log-level", type=str, default="info", help="日志级别 (debug, info, warning, error)")
+    parser.add_argument("--no-display", action="store_true", help="禁用显示界面")
+    parser.add_argument("--no-ejection", action="store_true", help="禁用剔除机构")
+    parser.add_argument("--test-ejector", action="store_true", help="启动前测试剔除机构")
+    args = parser.parse_args()
+    
+    try:
+        # 初始化系统
+        initialize_system(args.config)
         
+        # 测试剔除机构（如果需要）
+        if args.test_ejector:
+            logger.info("测试剔除机构...")
+            io_controller.activate_rejector(0.5)
+            time.sleep(1)
+        
+        # 启动传送带
+        io_controller.start_conveyor()
+        logger.info("传送带已启动，系统运行中...")
+        
+        # 运行直到被中断
+        try:
+            while running:
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            logger.info("接收到中断信号，系统正在停止...")
+        
+    except Exception as e:
+        logger.exception(f"系统运行过程中发生错误: {str(e)}")
     finally:
-        # Display final statistics
-        display_statistics(logger)
-        
-        # Cleanup resources
-        logger.info("Cleaning up resources...")
-        
-        try:
-            if 'display' in locals() and display:
-                display.close()
-        except Exception as e:
-            logger.error(f"Error closing display: {e}")
-        
-        try:
-            if 'conveyor' in locals():
-                conveyor.stop()
-                conveyor.cleanup()
-        except Exception as e:
-            logger.error(f"Error cleaning up conveyor: {e}")
-        
-        try:
-            if 'camera' in locals():
-                camera.close_camera()
-        except Exception as e:
-            logger.error(f"Error closing camera: {e}")
-        
-        logger.info("System shutdown complete")
+        # 清理资源
+        cleanup()
 
 if __name__ == "__main__":
     main()
