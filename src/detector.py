@@ -18,7 +18,7 @@ logger = logging.getLogger("DefectInspection.Detector")
 class YOLODetector:
     """YOLO object detector with support for YOLOv11 models and Jetson DLA acceleration"""
     
-    def __init__(self, model_name: str = "yolov11n", 
+    def __init__(self, model_name: str = "yolo11n", 
                  conf_thresh: float = 0.25, 
                  nms_thresh: float = 0.45,
                  models_dir: str = "../models", 
@@ -42,7 +42,7 @@ class YOLODetector:
         self.use_dla = use_dla
         self.dla_core = dla_core
         self.model = None
-        self.class_names = ["scratch", "dent", "stain", "crack", "deformation"]
+        self.class_names = ["deformation"]
         
         # Create models directory if it doesn't exist
         os.makedirs(self.models_dir, exist_ok=True)
@@ -225,36 +225,20 @@ class YOLODetector:
         """
         img = image.copy()
         
-        # Define colors for each class
-        colors = [
-            (0, 0, 255),     # Red for scratch
-            (0, 255, 255),   # Yellow for dent
-            (0, 128, 255),   # Orange for stain
-            (255, 0, 0),     # Blue for crack
-            (128, 0, 255),   # Purple for deformation
-        ]
+        # 简化为只使用一种颜色
+        color = (0, 0, 255)  # 红色用于标记所有缺陷
         
         for det in detections:
             x1, y1, x2, y2, conf, class_id = det
             
             # Convert to int
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-            class_id = int(class_id)
-            
-            # Get color for this class
-            color = colors[class_id % len(colors)]
-            
-            # Get class name
-            if class_id < len(self.class_names):
-                class_name = self.class_names[class_id]
-            else:
-                class_name = f"class_{class_id}"
             
             # Draw box
             cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
             
             # Draw label
-            label = f"{class_name} {conf:.2f}"
+            label = f"缺陷 {conf:.2f}"
             (label_w, label_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.rectangle(img, (x1, y1 - label_h - 5), (x1 + label_w, y1), color, -1)
             cv2.putText(img, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
@@ -289,7 +273,7 @@ class YOLODetector:
 #         # Initialize detector with YOLOv11n model
 #         # Options include: yolov11n, yolov11s, yolov11m, yolov11l
 #         detector = YOLODetector(
-#             model_name="yolo11n", 
+#             model_name="yolo11l", 
 #             conf_thresh=0.25, 
 #             use_dla=True
 #         )

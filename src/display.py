@@ -46,11 +46,7 @@ class DefectDisplay:
             "start_time": time.time(),
             "last_detection_time": 0,
             "defect_types": {
-                "scratch": 0,
-                "dent": 0,
-                "stain": 0,
-                "crack": 0,
-                "deformation": 0
+                "defect": 0  # 简化为只有一种缺陷类型
             }
         }
         
@@ -145,38 +141,32 @@ class DefectDisplay:
         self.ui_elements["-DEFECT-RATE-"] = Label(stats_content, text="0.0%", font=("微软雅黑", 10), bg="#333333", fg="white")
         self.ui_elements["-DEFECT-RATE-"].grid(row=4, column=1, sticky="w", padx=(5, 0), pady=2)
         
-        # 2. 缺陷类型统计框架
+        # 2. 缺陷类型统计框架 - 简化为只显示一种缺陷
         defect_frame = Frame(right_frame, bg="#333333", padx=8, pady=8, relief=tk.GROOVE, bd=2)
         defect_frame.pack(fill=tk.X, expand=True, pady=(0, 10))
         
-        Label(defect_frame, text="缺陷类型统计", font=("微软雅黑", 12, "bold"), bg="#333333", fg="white").pack(anchor="w", pady=(0, 5))
+        Label(defect_frame, text="缺陷统计", font=("微软雅黑", 12, "bold"), bg="#333333", fg="white").pack(anchor="w", pady=(0, 5))
         
         # 缺陷类型统计内容
         defect_content = Frame(defect_frame, bg="#333333")
         defect_content.pack(fill=tk.X, expand=True)
         
-        # 添加缺陷类型统计行
-        defect_types = [
-            ("scratch", "划痕"),
-            ("dent", "凹痕"),
-            ("stain", "污渍"),
-            ("crack", "裂缝"),
-            ("deformation", "变形")
-        ]
+        # 只添加一种缺陷类型
+        defect_id = "defect"
+        defect_name = "瑕疵"
         
-        for i, (defect_id, defect_name) in enumerate(defect_types):
-            # 创建缺陷类型标签
-            Label(defect_content, text=f"{defect_name}:", font=("微软雅黑", 10), bg="#333333", fg="white").grid(row=i, column=0, sticky="w", pady=4)
-            
-            # 创建计数标签
-            self.ui_elements[f"-{defect_id.upper()}-COUNT-"] = Label(defect_content, text="0", font=("微软雅黑", 10), bg="#333333", fg="white", width=5)
-            self.ui_elements[f"-{defect_id.upper()}-COUNT-"].grid(row=i, column=1, sticky="w", padx=(5, 10), pady=4)
-            
-            # 创建进度条
-            self.progress_vars[defect_id] = tk.DoubleVar(value=0)
-            progress = ttk.Progressbar(defect_content, variable=self.progress_vars[defect_id], length=150, mode="determinate", maximum=100)
-            progress.grid(row=i, column=2, sticky="w", pady=4)
-            self.ui_elements[f"-{defect_id.upper()}-PROGRESS-"] = progress
+        # 创建缺陷类型标签
+        Label(defect_content, text=f"{defect_name}:", font=("微软雅黑", 10), bg="#333333", fg="white").grid(row=0, column=0, sticky="w", pady=4)
+        
+        # 创建计数标签
+        self.ui_elements[f"-{defect_id.upper()}-COUNT-"] = Label(defect_content, text="0", font=("微软雅黑", 10), bg="#333333", fg="white", width=5)
+        self.ui_elements[f"-{defect_id.upper()}-COUNT-"].grid(row=0, column=1, sticky="w", padx=(5, 10), pady=4)
+        
+        # 创建进度条
+        self.progress_vars[defect_id] = tk.DoubleVar(value=0)
+        progress = ttk.Progressbar(defect_content, variable=self.progress_vars[defect_id], length=150, mode="determinate", maximum=100)
+        progress.grid(row=0, column=2, sticky="w", pady=4)
+        self.ui_elements[f"-{defect_id.upper()}-PROGRESS-"] = progress
         
         # 3. 最近检测框架
         recent_frame = Frame(right_frame, bg="#333333", padx=8, pady=8, relief=tk.GROOVE, bd=2)
@@ -244,13 +234,13 @@ class DefectDisplay:
         
         # 配置关闭窗口事件
         self.root.protocol("WM_DELETE_WINDOW", self.close)
-        
+    
     def update_image(self, image: np.ndarray, detection_results: List = None):
         """
         更新图像和检测结果
         
         Args:
-            image: 要显示的图像(OpenCV格式，BGR)
+            image: 要显示的图像(OpenCV格式，BGR)，应该已经包含检测结果的绘制
             detection_results: 检测结果列表，每项为[x1, y1, x2, y2, conf, class_id]
         """
         if image is None or self.root is None:
@@ -269,22 +259,14 @@ class DefectDisplay:
             # 检查是否有缺陷
             if len(detection_results) > 0:
                 self.stats["defect_count"] += 1
-                # 更新缺陷类型计数
-                for det in detection_results:
-                    if len(det) >= 6:
-                        class_id = int(det[5])
-                        class_name = self._get_class_name(class_id)
-                        if class_name in self.stats["defect_types"]:
-                            self.stats["defect_types"][class_name] += 1
+                # 所有缺陷计入同一类别
+                self.stats["defect_types"]["defect"] += len(detection_results)
         else:
             # 没有检测结果但仍计为一次检测
             self.stats["total_inspections"] += 1
             
-        # 在图像上绘制检测结果
-        display_img = self._draw_detection_results(self.latest_image, self.latest_results)
-        
         # 转换为PIL图像，然后转为Tkinter PhotoImage
-        img_rgb = cv2.cvtColor(display_img, cv2.COLOR_BGR2RGB)
+        img_rgb = cv2.cvtColor(self.latest_image, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(img_rgb)
         
         # 调整图像大小以适应画布
@@ -315,54 +297,6 @@ class DefectDisplay:
         # 更新界面信息
         self._update_info()
         return True
-    
-    def _draw_detection_results(self, image: np.ndarray, detection_results: List) -> np.ndarray:
-        """在图像上绘制检测结果"""
-        if image is None:
-            return np.zeros((480, 640, 3), dtype=np.uint8)
-            
-        # 复制图像以免修改原图
-        img = image.copy()
-        
-        # 颜色映射
-        color_map = {
-            0: (0, 0, 255),    # 划痕 - 红色
-            1: (0, 255, 0),    # 凹痕 - 绿色
-            2: (255, 0, 0),    # 污渍 - 蓝色
-            3: (0, 255, 255),  # 裂缝 - 黄色
-            4: (255, 0, 255)   # 变形 - 紫色
-        }
-        
-        # 绘制检测框
-        if detection_results:
-            for i, det in enumerate(detection_results):
-                if len(det) >= 6:
-                    x1, y1, x2, y2, conf, class_id = [int(v) if i < 5 else v for i, v in enumerate(det[:6])]
-                    class_id = int(class_id)
-                    
-                    # 获取颜色
-                    color = color_map.get(class_id, (200, 200, 200))
-                    
-                    # 绘制边界框
-                    cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
-                    
-                    # 添加标签和置信度
-                    label = f"{self._get_class_name(class_id)}: {conf:.2f}"
-                    cv2.putText(img, label, (x1, y1 - 10), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-        
-        return img
-    
-    def _get_class_name(self, class_id: int) -> str:
-        """根据类别ID获取类别名称"""
-        class_names = {
-            0: "scratch",
-            1: "dent",
-            2: "stain", 
-            3: "crack",
-            4: "deformation"
-        }
-        return class_names.get(class_id, f"class_{class_id}")
     
     def _update_info(self):
         """更新界面信息"""
@@ -406,8 +340,7 @@ class DefectDisplay:
                 for i, det in enumerate(self.latest_results):
                     if len(det) >= 6:
                         x1, y1, x2, y2, conf, class_id = det[:6]
-                        class_name = self._get_class_name(int(class_id))
-                        details.append(f"{i+1}. {class_name} (置信度: {conf:.2f})")
+                        details.append(f"{i+1}. 缺陷 (置信度: {conf:.2f})")
                         
                 details_str = "\n".join(details)
             else:
@@ -423,19 +356,15 @@ class DefectDisplay:
         self.ui_elements["-DEFECT-COUNT-"].config(text=str(self.stats["defect_count"]))
         self.ui_elements["-DEFECT-RATE-"].config(text=f"{defect_rate:.1f}%")
         
-        # 更新缺陷类型统计
-        max_type_count = max(max(self.stats["defect_types"].values(), default=0), 1)
+        # 更新缺陷统计
+        defect_count = self.stats["defect_types"]["defect"]
+        self.ui_elements["-DEFECT-COUNT-"].config(text=str(defect_count))
         
-        for defect_type, count in self.stats["defect_types"].items():
-            key_count = f"-{defect_type.upper()}-COUNT-"
-            
-            if key_count in self.ui_elements:
-                self.ui_elements[key_count].config(text=str(count))
-                
-            # 更新进度条
-            if defect_type in self.progress_vars:
-                progress_value = (count / max_type_count) * 100
-                self.progress_vars[defect_type].set(progress_value)
+        # 更新进度条
+        if "defect" in self.progress_vars:
+            # 假设最多100个缺陷，超过则保持100%
+            progress_value = min(defect_count, 100)
+            self.progress_vars["defect"].set(progress_value)
                 
         # 更新最近检测信息
         self.ui_elements["-LAST-DETECTION-TIME-"].config(text=last_time)
@@ -447,7 +376,7 @@ class DefectDisplay:
         details_text.delete(1.0, tk.END)
         details_text.insert(tk.END, details_str)
         details_text.config(state=tk.DISABLED)
-    
+        
     def set_status(self, status: str, is_error: bool = False):
         """
         设置系统状态
@@ -494,11 +423,7 @@ class DefectDisplay:
             "start_time": time.time(),
             "last_detection_time": 0,
             "defect_types": {
-                "scratch": 0,
-                "dent": 0,
-                "stain": 0,
-                "crack": 0,
-                "deformation": 0
+                "defect": 0  # 只保留一种缺陷类型
             }
         }
         
@@ -544,6 +469,7 @@ class DefectDisplay:
             self.root.destroy()
             self.root = None
 
+
 # 示例用法
 # if __name__ == "__main__":
 #     # 配置日志
@@ -569,74 +495,56 @@ class DefectDisplay:
 #     def detection_thread():
 #         import random
 #         import time
+#         import cv2
         
-#         # 加载测试图像
-#         try:
-#             test_images = []
-#             image_dir = "./test_images"  # 测试图像目录
+#         # 创建一些测试图像
+#         test_images = []
+#         for i in range(3):
+#             img = np.zeros((480, 640, 3), dtype=np.uint8)
+#             # 添加一些随机形状
+#             for _ in range(10):
+#                 x = random.randint(0, 600)
+#                 y = random.randint(0, 440)
+#                 color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
+#                 radius = random.randint(10, 50)
+#                 cv2.circle(img, (x, y), radius, color, -1)
+#             test_images.append(img)
             
-#             # 如果没有测试图像，创建模拟图像
-#             if not os.path.exists(image_dir) or len(os.listdir(image_dir)) == 0:
-#                 for i in range(5):
-#                     img = np.zeros((480, 640, 3), dtype=np.uint8)
-#                     # 随机添加一些矩形
-#                     for _ in range(random.randint(1, 5)):
-#                         x1 = random.randint(50, 550)
-#                         y1 = random.randint(50, 350)
-#                         w = random.randint(30, 100)
-#                         h = random.randint(30, 100)
-#                         color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
-#                         cv2.rectangle(img, (x1, y1), (x1 + w, y1 + h), color, -1)
-#                     test_images.append(img)
-#             else:
-#                 # 加载目录中的图像
-#                 for filename in os.listdir(image_dir):
-#                     if filename.lower().endswith(('.png', '.jpg', '.jpeg')):
-#                         img_path = os.path.join(image_dir, filename)
-#                         img = cv2.imread(img_path)
-#                         if img is not None:
-#                             test_images.append(img)
+#         while display.running:
+#             time.sleep(2)  # 每2秒更新一次
             
-#             # 如果没有图像，创建一个默认图像
-#             if not test_images:
-#                 img = np.ones((480, 640, 3), dtype=np.uint8) * 128
-#                 cv2.putText(img, "No Test Images", (200, 240), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-#                 test_images.append(img)
+#             if not display.running:
+#                 break
                 
-#             # 模拟检测循环
-#             while display.running:
-#                 # 随机选择一张图像
-#                 img = random.choice(test_images).copy()
+#             # 随机选择一张图片
+#             img = random.choice(test_images).copy()
+            
+#             # 随机生成一些检测结果
+#             if random.random() < 0.7:  # 70%概率有缺陷
+#                 num_defects = random.randint(1, 3)
+#                 detections = []
                 
-#                 # 随机生成一些检测结果
-#                 if random.random() < 0.7:  # 70%概率有缺陷
-#                     num_defects = random.randint(1, 3)
-#                     detections = []
+#                 for _ in range(num_defects):
+#                     x1 = random.randint(50, 550)
+#                     y1 = random.randint(50, 350)
+#                     w = random.randint(30, 100)
+#                     h = random.randint(30, 100)
+#                     conf = random.uniform(0.7, 0.98)
                     
-#                     for _ in range(num_defects):
-#                         x1 = random.randint(50, 550)
-#                         y1 = random.randint(50, 350)
-#                         w = random.randint(30, 100)
-#                         h = random.randint(30, 100)
-#                         conf = random.uniform(0.7, 0.98)
-#                         class_id = random.randint(0, 4)
-                        
-#                         detections.append([x1, y1, x1 + w, y1 + h, conf, class_id])
-                        
-#                     # 更新图像和检测结果
-#                     display.update_image(img, detections)
-#                     display.set_status(f"检测完成，发现{len(detections)}个缺陷")
-#                 else:
-#                     # 无缺陷
-#                     display.update_image(img, [])
-#                     display.set_status("检测完成，未发现缺陷")
-                
-#                 # 随机等待时间
-#                 time.sleep(random.uniform(1.0, 3.0))
-                
-#         except Exception as e:
-#             logger.error(f"模拟检测线程出错: {e}")
-#             display.set_status(f"检测错误: {e}", is_error=True)
+#                     # 在图像上预先绘制检测框
+#                     cv2.rectangle(img, (x1, y1), (x1+w, y1+h), (0, 0, 255), 2)
+#                     cv2.putText(img, f"Defect: {conf:.2f}", (x1, y1-5), 
+#                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                    
+#                     # 添加到检测结果列表
+#                     detections.append([x1, y1, x1 + w, y1 + h, conf, 0])
+                    
+#                 # 更新图像和检测结果
+#                 display.update_image(img, detections)
+#                 display.set_status(f"检测完成，发现{len(detections)}个缺陷")
+#             else:
+#                 display.update_image(img, [])
+#                 display.set_status("检测完成，未发现缺陷")
     
 #     # 启动模拟检测线程
 #     thread = threading.Thread(target=detection_thread, daemon=True)

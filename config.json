@@ -1,33 +1,34 @@
 {
     "version": "1.0.0",
-    "io_controller": {
-        "position_sensor_pin": 7,
-        "conveyor_pin": 29,
-        "rejector_pin": 31,
-        "position_register": "0x02448030 w 0x040",
-        "conveyor_register": "0x02430068 w 0x004",
-        "rejector_register": "0x02430070 w 0x004"
-    },
     "camera": {
         "index": 0,
         "exposure": 10000,
         "gain": 10.0,
-        "save_images": true
+        "save_images": false
+    },
+    "conveyor": {
+        "enable_pin": 17,
+        "direction_pin": 27,
+        "pulse_pin": 22,
+        "sensor_pin": 23,
+        "emergency_stop_pin": 24,
+        "ejector_pin": 25,
+        "ejector_active_high": true,
+        "conveyor_speed": 50,
+        "stop_delay": 0.5
     },
     "detector": {
-        "model_name": "yolov11n",
-        "models_dir": "models",
+        "model_name": "yolo11l",
         "confidence_threshold": 0.25,
-        "nms_threshold": 0.45,
-        "use_dla": true,
-        "dla_core": 0,
-        "class_names": ["scratch", "dent", "stain", "crack", "deformation"]
+        "class_names": ["defect"],
+        "models_dir": "/home/gtm/defect_inspection/models",
+        "use_dla": true
     },
     "api": {
-        "api_url": "http://example.com/api",
-        "auth_token": "",
-        "line_name": "Line01",
-        "product_type": "QC",
+        "api_url": "http://192.168.4.53:8080",
+        "auth_token": "ed1c8c53f2eb220ca6a324e5e166b99eea33251a",
+        "line_name": "line_1",
+        "product_type": "盖子",
         "timeout": 10,
         "max_retries": 3,
         "retry_delay": 5
@@ -45,6 +46,6 @@
         "delay": 1.0,
         "duration": 0.5
     },
-    "output_dir": "data/images",
+    "output_dir": "",
     "stats_interval": 3600
 }

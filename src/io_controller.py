@@ -250,50 +250,50 @@ class PipelineController:
 
 
 # 测试代码
-if __name__ == "__main__":
-    # 配置日志
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+# if __name__ == "__main__":
+#     # 配置日志
+#     logging.basicConfig(
+#         level=logging.INFO,
+#         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+#     )
     
-    # 流水线1配置
-    pipeline = PipelineController(
-        position_sensor_pin=7,  # BOARD模式引脚7
-        conveyor_pin=29,        # BOARD模式引脚29
-        rejector_pin=31,        # BOARD模式引脚31
-        position_register="0x02448030 w 0x040",
-        conveyor_register="0x02430068 w 0x004",
-        rejector_register="0x02430070 w 0x004"
-    )
+#     # 流水线1配置
+#     pipeline = PipelineController(
+#         position_sensor_pin=7,  # BOARD模式引脚7
+#         conveyor_pin=29,        # BOARD模式引脚29
+#         rejector_pin=31,        # BOARD模式引脚31
+#         position_register="0x02448030 w 0x040",
+#         conveyor_register="0x02430068 w 0x004",
+#         rejector_register="0x02430070 w 0x004"
+#     )
     
-    # 注册位置传感器回调
-    def position_callback():
-        logger.info("检测到产品！")
-        pipeline.stop_conveyor()
-        # 模拟检测过程
-        time.sleep(1)
-        # 模拟剔除不良品
-        pipeline.activate_rejector(3)
-        # 重启传送带
-        time.sleep(3)
-        pipeline.start_conveyor()
+#     # 注册位置传感器回调
+#     def position_callback():
+#         logger.info("检测到产品！")
+#         pipeline.stop_conveyor()
+#         # 模拟检测过程
+#         time.sleep(1)
+#         # 模拟剔除不良品
+#         pipeline.activate_rejector(3)
+#         # 重启传送带
+#         time.sleep(3)
+#         pipeline.start_conveyor()
     
-    # 注册回调函数
-    pipeline.register_position_callback(position_callback)
+#     # 注册回调函数
+#     pipeline.register_position_callback(position_callback)
     
-    try:
-        # 启动传送带
-        logger.info("启动流水线传送带...")
-        pipeline.start_conveyor()
+#     try:
+#         # 启动传送带
+#         logger.info("启动流水线传送带...")
+#         pipeline.start_conveyor()
         
-        # 运行一段时间
-        logger.info("系统运行中，按Ctrl+C退出...")
-        while True:
-            time.sleep(1)
+#         # 运行一段时间
+#         logger.info("系统运行中，按Ctrl+C退出...")
+#         while True:
+#             time.sleep(1)
             
-    except KeyboardInterrupt:
-        logger.info("接收到中断信号，正在退出...")
-    finally:
-        # 清理资源
-        pipeline.close()
+#     except KeyboardInterrupt:
+#         logger.info("接收到中断信号，正在退出...")
+#     finally:
+#         # 清理资源
+#         pipeline.close()

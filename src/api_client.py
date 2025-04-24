@@ -273,84 +273,106 @@ class APIClient:
             logger.warning(f"Connection test failed: {str(e)}")
             return False
      
-    def import_to_label_studio(self, image_path: str, detections: List = None, 
-                           metadata: Optional[Dict] = None,
-                           project_id: int = None) -> bool:
+    def import_to_label_studio(self, image, detections: List = None, 
+                       metadata: Optional[Dict] = None,
+                       project_id: int = None,
+                       is_path: bool = True) -> bool:
         """
         Import an image with pre-annotations to Label Studio for labeling
         
         Args:
-            image_path: Path to the image file
+            image: Path to the image file or numpy array containing image data
             detections: Optional list of detections to use as pre-annotations
             metadata: Optional metadata to include with the task
             project_id: Label Studio project ID (overrides default project)
+            is_path: If True, 'image' is a file path; if False, 'image' is a numpy array
             
         Returns:
-            Optional[Dict]: Task data if successful, None otherwise
+            bool: True if successful, False otherwise
         """
         if not self.api_url or not self.api_token:
             logger.warning("API not configured")
-            return None
-            
-        if not os.path.exists(image_path):
-            logger.error(f"Image file not found: {image_path}")
-            return None
+            return False
             
         try:
             # Use specified project ID or default
             active_project_id = project_id or self.project_id
             if not active_project_id:
                 logger.error("No project ID specified or available")
-                return None
+                return False
             
-            # Get image dimensions for coordinate conversion (needed for annotations)
-            image_width = None
-            image_height = None
-            try:
-                from PIL import Image
-                with Image.open(image_path) as img:
-                    image_width, image_height = img.size
-            except Exception as e:
-                logger.warning(f"Could not get image dimensions: {e}")
-                # Continue anyway - we'll skip annotations if dimensions are missing
+            # 处理图像 - 根据is_path参数判断输入类型
+            if is_path:
+                # 检查文件是否存在
+                if not os.path.exists(image):
+                    logger.error(f"Image file not found: {image}")
+                    return False
+                    
+                # 获取图像尺寸
+                try:
+                    from PIL import Image as PILImage
+                    with PILImage.open(image) as img:
+                        image_width, image_height = img.size
+                except Exception as e:
+                    logger.warning(f"Could not get image dimensions: {e}")
+                    # 继续执行 - 如果无法获取尺寸，将跳过添加标注
+                
+                # 准备文件上传
+                filename = os.path.basename(image)
+                file_data = open(image, 'rb')
+            else:
+                # 处理numpy数组
+                import cv2
+                import numpy as np
+                from io import BytesIO
+                
+                if not isinstance(image, np.ndarray):
+                    logger.error("Invalid image data: expected numpy array")
+                    return False
+                    
+                # 从数组获取尺寸
+                image_height, image_width = image.shape[:2]
+                
+                # 转换为JPEG格式
+                _, buffer = cv2.imencode(".jpg", image)
+                file_data = BytesIO(buffer.tobytes())
+                filename = f"image_{int(time.time())}.jpg"
             
-            # Step 1: Upload image file using multipart form data
+            # 准备上传
             headers = self._get_headers()
-            # Remove Content-Type from headers for file upload
+            # 移除Content-Type以便文件上传
             upload_headers = {k: v for k, v in headers.items() if k.lower() != 'content-type'}
             
-            # Prepare file upload
-            filename = os.path.basename(image_path)
+            # 准备文件上传
             files = {
-                'file': (filename, open(image_path, 'rb'), f"image/{self._get_image_mime(filename)}")
+                'file': (filename, file_data, f"image/{self._get_image_mime(filename)}")
             }
             
-            # Add metadata as form data
+            # 添加元数据
             form_data = {}
             if metadata:
-                # Convert metadata to JSON string and add to form data
                 form_data['metadata'] = json.dumps(metadata)
             
-            # Send the request with file attachment
+            # 发送请求
             try:
                 response = requests.post(
                     f"{self.api_url}/api/projects/{active_project_id}/import?return_task_ids=true",
                     headers=upload_headers,
                     files=files,
                     data=form_data,
-                    timeout=self.timeout * 2  # Increased timeout for file upload
+                    timeout=self.timeout * 2
                 )
             finally:
-                # Close the file handle
-                files['file'][1].close()
+                # 关闭文件
+                file_data.close()
             
             if response.status_code not in [200, 201]:
                 logger.error(f"Failed to upload image: Status {response.status_code}")
                 if response.text:
                     logger.error(f"Response: {response.text}")
-                return None
+                return False
                 
-            # Parse response to get task ID
+            # 解析响应获取task_id
             upload_result = response.json()
             logger.debug(f"Image upload response: {upload_result}")
             
@@ -360,11 +382,11 @@ class APIClient:
             
             if not task_id:
                 logger.error("No task ID returned from image upload")
-                return upload_result  # Return whatever we got
+                return False
             
             logger.info(f"Successfully uploaded image to project {active_project_id}, task ID: {task_id}")
             
-            # Step 2: If we have detections and dimensions, add annotations to the task
+            # 如果有检测结果和图像尺寸，添加标注
             if detections and image_width and image_height:
                 annotation_result = self._add_annotations_to_task(
                     task_id, detections, image_width, image_height
@@ -379,7 +401,7 @@ class APIClient:
             return False
 
     def _add_annotations_to_task(self, task_id: int, detections: List, 
-                                image_width: int, image_height: int) -> bool:
+                           image_width: int, image_height: int) -> bool:
         """
         Add annotations to an existing task
         
@@ -400,48 +422,65 @@ class APIClient:
             
             # Create annotation in Label Studio format
             for i, det in enumerate(detections):
-                if len(det) >= 6:  # x1, y1, x2, y2, conf, class_id
-                    x, y, w, h, conf, class_id = det[:6]
+                if len(det) >= 6:  # x, y, width, height, conf, class_id
+                    # 确保所有数值都转换为Python原生类型，而不是numpy类型
+                    x1 = float(det[0])
+                    y1 = float(det[1])
+                    x2 = float(det[2])
+                    y2 = float(det[3])
+                    conf = float(det[4])
+                    class_id = int(det[5])
                     
-                    # Create result based on our labeling config
+                    # 计算相对宽度和高度
+                    width = (x2 - x1) / image_width * 100
+                    height = (y2 - y1) / image_height * 100
+                    
+                    # 转换为相对坐标 (0-100%)
+                    x = x1 / image_width * 100
+                    y = y1 / image_height * 100
+                    
+                    # 创建Label Studio格式的标注
                     results.append({
-                        "type": "rectangle",  # rectanglelabels for labeled boxes
+                        "type": "rectangle",
                         "value": {
-                            "x": x,
-                            "y": y,
-                            "width": w,
-                            "height": h,
+                            "x": float(x),
+                            "y": float(y),
+                            "width": float(width),
+                            "height": float(height),
                             "rotation": 0,
                         },
                         "to_name": "image",
                         "from_name": "rectangle"
                     })
             
-            # Create annotation payload
+            # 确保所有数据都是JSON可序列化的
             annotation_data = {
-                "result": results
+                "result": results,
+                "score": 1.0,
+                "ground_truth": False,
+                "lead_time": 0
             }
             
-            # Submit annotation
+            # 提交标注
             headers = self._get_headers()
             response = requests.post(
                 f"{self.api_url}/api/tasks/{task_id}/annotations/",
                 headers=headers,
-                json=annotation_data,
+                json=annotation_data,  # 使用json参数会自动处理序列化
                 timeout=self.timeout
             )
             
             if response.status_code not in [200, 201]:
-                logger.error(f"Failed to add annotations to task: Status {response.status_code}")
+                logger.error(f"添加标注失败: 状态码 {response.status_code}")
                 if response.text:
-                    logger.error(f"Response: {response.text}")
+                    logger.error(f"响应: {response.text}")
                 return False
                 
-            logger.info(f"Successfully added {len(results)} annotations to task {task_id}")
+            logger.info(f"成功为任务 {task_id} 添加 {len(results)} 个标注")
             return True
             
         except Exception as e:
-            logger.error(f"Error adding annotations to task: {e}")
+            logger.error(f"添加标注时出错: {e}")
             return False
             
 
@@ -701,21 +740,26 @@ class APIClient:
 
 # test
 # if __name__ == "__main__":
-#     # Configure basic logging
+#     # 配置日志
 #     logging.basicConfig(
 #         level=logging.DEBUG,
 #         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 #     )
-    
+
 #     # 从配置中读取必要参数
 #     config = {
-#         "api_url": "http://192.168.110.154:8080",
-#         "api_token": "f8806eb800e1655282702c53e609bbf1f261a996",
+#         "api_url": "http://192.168.4.53:8080",
+#         "api_token": "ed1c8c53f2eb220ca6a324e5e166b99eea33251a",
 #         "line_name": "Line01",
-#         "product_type": "Smartphone"
+#         "product_type": "盖子"
 #     }
 
-#     # 初始化 API 客户端
+#     print("-" * 50)
+#     print("测试API客户端")
+#     print("-" * 50)
+    
+#     # 初始化API客户端
+#     print("初始化API客户端...")
 #     api_client = APIClient(
 #         api_url=config["api_url"],
 #         api_token=config["api_token"],
@@ -723,26 +767,70 @@ class APIClient:
 #         product_type=config["product_type"]
 #     )
 
-#     # API 客户端已经初始化完成，包括项目查询和创建
-#     # 现在可以直接使用它来上传图像和标注
-
-#     # 上传图像示例
-#     image_path = "/home/gtm/defect_inspection/data/images/bus.jpg"
-#     detections = [
-#         [30, 40, 20, 30, 0.95, 0],  # scratch - x, y, width, height, confidence, class_id
-#         [60, 80, 20, 20, 0.85, 1]   # dent
+#     # 测试连接
+#     print(f"连接状态: {'成功' if api_client.test_connection() else '失败'}")
+#     print(f"当前项目ID: {api_client.project_id}")
+    
+#     # 测试两种方式上传图像
+#     import numpy as np
+#     import cv2
+#     # 1. 测试文件路径上传
+#     print("\n测试 #1: 使用文件路径上传")
+    
+#     # 创建测试图像目录
+#     test_dir = "/home/gtm/defect_inspection/data/images"
+#     os.makedirs(test_dir, exist_ok=True)
+    
+#     # 创建测试图像文件
+#     image_path = os.path.join(test_dir, "test_image.jpg")
+#     test_img1 = np.zeros((480, 640, 3), dtype=np.uint8)
+#     cv2.rectangle(test_img1, (100, 100), (300, 300), (0, 0, 255), 2)
+#     cv2.putText(test_img1, "Test Image", (100, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+#     cv2.imwrite(image_path, test_img1)
+#     print(f"创建测试图像: {image_path}")
+    
+#     # 模拟检测结果
+#     detections1 = [
+#         [80, 60, 30, 10, 0.95, 0],  # x, y, width, height, confidence, class_id
 #     ]
-#     metadata = {
+    
+#     metadata1 = {
 #         "timestamp": time.time(),
-#         "batch_id": "BATCH_2025_03_31",
-#         "camera_id": "CAM_01"
+#         "batch_id": "TEST_BATCH_1",
+#         "camera_id": "CAM_TEST",
+#         "test_type": "file_path"
 #     }
 
-#     result = api_client.import_to_label_studio(image_path, detections, metadata)
-#     if result:
-#         print(f"Successfully uploaded image with {len(detections)} detections")
-#     else:
-#         print("Failed to upload image")
+#     # 使用文件路径上传
+#     result1 = api_client.import_to_label_studio(image_path, detections1, metadata1, is_path=True)
+#     print(f"文件路径上传结果: {'成功' if result1 else '失败'}")
 
+#     # 2. 测试numpy数组上传
+#     print("\n测试 #2: 使用numpy数组上传")
     
+
+#     # 创建测试图像
+#     test_img2 = np.zeros((480, 640, 3), dtype=np.uint8)
+#     cv2.rectangle(test_img2, (200, 150), (400, 350), (0, 255, 0), 2)
+#     cv2.putText(test_img2, "Numpy Image", (200, 100), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+    
+#     # 模拟检测结果
+#     detections2 = [
+#         [30, 60, 20, 50, 0.85, 0],  # x, y, width, height, confidence, class_id
+#     ]
+    
+#     metadata2 = {
+#         "timestamp": time.time(),
+#         "batch_id": "TEST_BATCH_2",
+#         "camera_id": "CAM_TEST",
+#         "test_type": "numpy_array"
+#     }
+
+#     # 使用numpy数组上传
+#     result2 = api_client.import_to_label_studio(test_img2, detections2, metadata2, is_path=False)
+#     print(f"numpy数组上传结果: {'成功' if result2 else '失败'}")
+
+#     # 清理
 #     api_client.close()
+#     print("\n测试完成")
+#     print("-" * 50)

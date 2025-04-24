@@ -17,6 +17,7 @@ import logging
 import logging.handlers
 from datetime import datetime
 from typing import Dict, Any, Optional, Union, Tuple
+import numpy as np
 
 def setup_logging(level: int = logging.INFO, 
                  log_file: Optional[str] = None, 
@@ -91,71 +92,31 @@ def setup_logging(level: int = logging.INFO,
 
 def load_config(config_path: str) -> Dict[str, Any]:
     """
-    Load configuration from JSON file
+    从JSON文件加载配置
     
     Args:
-        config_path: Path to configuration file
+        config_path: 配置文件路径
         
     Returns:
-        Dictionary containing configuration
-        
-    Raises:
-        FileNotFoundError: If config file does not exist
-        json.JSONDecodeError: If config file is not valid JSON
+        配置字典
     """
+    # 创建一个局部logger变量，避免全局变量问题
+    local_logger = logging.getLogger("DefectInspection")
+    
     try:
-        with open(config_path, 'r') as f:
+        with open(config_path, 'r', encoding='utf-8') as f:
             config = json.load(f)
-        
-        # Extract the nested sections into the main config dict
-        flattened_config = {}
-        
-        # Process camera configuration
-        if 'camera' in config:
-            for key, value in config['camera'].items():
-                flattened_config[key] = value
-        
-        # Process conveyor configuration
-        if 'conveyor' in config:
-            for key, value in config['conveyor'].items():
-                flattened_config[key] = value
-        
-        # Process detector configuration
-        if 'detector' in config:
-            for key, value in config['detector'].items():
-                flattened_config[key] = value
-        
-        # Process API configuration
-        if 'api' in config:
-            for key, value in config['api'].items():
-                flattened_config[key] = value
-        
-        # Process display configuration
-        if 'display' in config:
-            for key, value in config['display'].items():
-                flattened_config[key] = value
-        
-        # Process ejection configuration
-        if 'ejection' in config:
-            for key, value in config['ejection'].items():
-                flattened_config[key] = value
-        
-        # Add the non-nested keys
-        for key, value in config.items():
-            if key not in ['camera', 'conveyor', 'detector', 'api', 'display', 'ejection']:
-                flattened_config[key] = value
-                
-        return flattened_config
-        
-    except FileNotFoundError:
-        print(f"Error: Configuration file not found: {config_path}")
-        sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"Error: Invalid JSON in configuration file: {e}")
-        sys.exit(1)
+            
+        # 配置加载后进行验证
+        if not isinstance(config, dict):
+            local_logger.warning(f"配置文件格式错误: {config_path}, 预期为字典")
+            return {}
+            
+        local_logger.debug(f"加载的配置: {json.dumps(config, indent=2, ensure_ascii=False)}")
+        return config
     except Exception as e:
-        print(f"Error loading configuration: {e}")
-        sys.exit(1)
+        local_logger.error(f"加载配置文件失败 {config_path}: {str(e)}")
+        return {}
 
 def get_timestamp(format_str: str = "%Y%m%d_%H%M%S") -> str:
     """
@@ -406,3 +367,40 @@ if __name__ == "__main__":
     logger.info(f"Calculated statistics: {calculated_stats}")
     
     logger.info("Utility tests completed")
+
+def convert_grayscale_to_rgb(img: np.ndarray) -> np.ndarray:
+    """
+    将灰度图像转换为RGB/BGR图像
+    
+    Args:
+        img: 输入的灰度图像 (H, W) 或 (H, W, 1)
+        
+    Returns:
+        转换后的三通道图像 (H, W, 3)
+    """
+    if img is None:
+        return None
+        
+    # 检查输入图像的维度
+    shape = img.shape
+    if len(shape) == 3 and shape[2] == 3:
+        # 已经是三通道图像，直接返回
+        return img
+    
+    # 确保图像是二维的（如果是三维但单通道，转为二维）
+    if len(shape) == 3 and shape[2] == 1:
+        img = img[:, :, 0]
+    
+    # 使用OpenCV将灰度图转换为BGR图像
+    try:
+        import cv2
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        return img_rgb
+    except Exception:
+        # 如果OpenCV方法失败，使用numpy复制通道
+        h, w = img.shape
+        img_rgb = np.zeros((h, w, 3), dtype=img.dtype)
+        img_rgb[:, :, 0] = img
+        img_rgb[:, :, 1] = img
+        img_rgb[:, :, 2] = img
+        return img_rgb

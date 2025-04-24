@@ -24,6 +24,7 @@ import signal
 import cv2
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+from src.utils import convert_grayscale_to_rgb
 
 # 导入系统模块
 from src.io_controller import PipelineController
@@ -31,6 +32,7 @@ from src.detector import YOLODetector as DefectDetector
 from src.display import DefectDisplay
 from src.api_client import APIClient
 from src.utils import setup_logging, load_config, ensure_directory_exists
+
 
 # 全局变量
 running = True
@@ -83,9 +85,7 @@ def initialize_system(config: Dict[str, Any], args):
     stats["system_start_time"] = datetime.now()
     
     # 初始化统计数据中的缺陷类型计数
-    class_names = config.get("detector", {}).get("class_names", ["scratch", "dent", "stain", "crack", "deformation"])
-    for class_name in class_names:
-        stats["defect_types"][class_name] = 0
+    stats["defect_types"] = {"defect": 0}
     
     # 1. 初始化IO控制器
     try:
@@ -128,14 +128,14 @@ def initialize_system(config: Dict[str, Any], args):
     try:
         detector_config = config.get("detector", {})
         detector = DefectDetector(
-            model_name=detector_config.get("model_name", "yolov11n"),
+            model_name=detector_config.get("model_name", "yolo11l"),
             conf_thresh=detector_config.get("confidence_threshold", 0.25),
             nms_thresh=detector_config.get("nms_threshold", 0.45),
             models_dir=detector_config.get("models_dir", "models"),
             use_dla=detector_config.get("use_dla", True)
         )
-        # 设置类别名称
-        detector.class_names = detector_config.get("class_names", detector.class_names)
+        # 设置类别名称为只有一种缺陷
+        detector.class_names = detector_config.get("class_names", ["defect"])
         logger.info("检测模型初始化成功")
     except Exception as e:
         logger.error(f"检测模型初始化失败: {str(e)}")
@@ -144,6 +144,7 @@ def initialize_system(config: Dict[str, Any], args):
     # 4. 初始化API客户端
     try:
         api_config = config.get("api", {})
+
         api_client = APIClient(
             api_url=api_config.get("api_url", ""),
             api_token=api_config.get("auth_token", ""),
@@ -153,6 +154,7 @@ def initialize_system(config: Dict[str, Any], args):
             max_retries=api_config.get("max_retries", 3),
             retry_delay=api_config.get("retry_delay", 5)
         )
+
         if api_config.get("api_url") and api_config.get("auth_token"):
             logger.info("API客户端初始化成功")
         else:
@@ -240,8 +242,15 @@ def cleanup_system():
     logger.info("系统资源清理完成")
 
 
-def save_detection_result(image, detection_results, save_dir="data/images"):
-    """保存检测图像和结果"""
+def save_detection_result(image, detection_results, save_dir):
+    """
+    保存检测图像和结果 (仅在需要时使用)
+    此功能默认被禁用，除非显式配置
+    """
+    # 检查是否配置了输出目录
+    if not save_dir:
+        return None, None
+        
     try:
         # 确保保存目录存在
         ensure_directory_exists(save_dir)
@@ -277,13 +286,16 @@ def process_product(stop_conveyor=True):
                 display.set_status("产品到达，准备检测...")
             io_controller.stop_conveyor()
         
+        # 停止传送带后等待一段时间，确保产品静止
+        time.sleep(0.5)
+
         # 2. 拍摄图像
         logger.info("捕获产品图像")
         if display:
             display.set_status("捕获产品图像...")
             
         # 捕获图像
-        image, _ = camera.capture_image(return_array=True)
+        image, _ = camera.capture_image(return_array=False, save_path="test_image.jpg")
         
         if image is None:
             logger.error("图像捕获失败")
@@ -291,7 +303,11 @@ def process_product(stop_conveyor=True):
                 display.set_status("图像捕获失败", is_error=True)
             io_controller.start_conveyor()  # 重启传送带继续生产
             return
-        
+        # 转换为3通道图像
+        image = convert_grayscale_to_rgb(image)
+        # numpy.ndarray转换为yolo能识别的图像
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
         # 3. 运行检测
         logger.info("执行瑕疵检测")
         if display:
@@ -307,14 +323,8 @@ def process_product(stop_conveyor=True):
             stats["defects_detected"] += 1
             logger.info(f"检测到{len(detection_results)}个瑕疵")
             
-            # 更新各类型瑕疵统计
-            for det in detection_results:
-                if len(det) >= 6:
-                    class_id = int(det[5])
-                    if 0 <= class_id < len(detector.class_names):
-                        class_name = detector.class_names[class_id]
-                        if class_name in stats["defect_types"]:
-                            stats["defect_types"][class_name] += 1
+            # 更新缺陷统计 - 简化为只计数总数
+            stats["defect_types"]["defect"] += len(detection_results)
             
             if display:
                 display.set_status(f"检测到{len(detection_results)}个瑕疵")
@@ -322,24 +332,22 @@ def process_product(stop_conveyor=True):
             logger.info("未检测到瑕疵")
             if display:
                 display.set_status("产品合格，未检测到瑕疵")
-        
+
         # 更新显示界面
         if display:
             # 在图像上绘制检测结果
             display_img = detector.draw_detections(image, detection_results)
             display.update_image(display_img, detection_results)
         
-        # 4. 保存结果并上传服务器
-        output_dir = args.save_dir or config.get("output_dir", "data/images")
-        image_path, result_path = save_detection_result(image, detection_results, output_dir)
-        
-        if image_path and api_client:
+        # 4. 上传服务器 (如果配置了API客户端)
+        if api_client and api_client.api_url and api_client.api_token:
             logger.info("上传检测结果到服务器")
             if display:
                 display.set_status("上传检测结果到服务器...")
             
             try:
-                api_client.import_to_label_studio(image_path, detection_results)
+                # 直接传递图像和检测结果，不保存到本地
+                api_client.import_to_label_studio(image, detection_results, is_path=False)
                 logger.info("结果上传成功")
             except Exception as e:
                 logger.error(f"结果上传失败: {str(e)}")
@@ -408,6 +416,9 @@ def main():
     try:
         # 加载配置
         config = load_config(args.config)
+        # 打印
+        logger.debug(f"加载的配置: {json.dumps(config, indent=2)}")
+        
         logger.info(f"成功加载配置文件: {args.config}")
         
         # 初始化系统
