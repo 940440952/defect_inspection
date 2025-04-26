@@ -6,16 +6,13 @@
         "gain": 10.0,
         "save_images": false
     },
-    "conveyor": {
-        "enable_pin": 17,
-        "direction_pin": 27,
-        "pulse_pin": 22,
-        "sensor_pin": 23,
-        "emergency_stop_pin": 24,
-        "ejector_pin": 25,
-        "ejector_active_high": true,
-        "conveyor_speed": 50,
-        "stop_delay": 0.5
+    "io_controller": {
+        "position_sensor_pin": 7,
+        "conveyor_pin": 29,
+        "rejector_pin": 31,
+        "position_register": "0x02448030 w 0x040",
+        "conveyor_register": "0x02430068 w 0x004",
+        "rejector_register": "0x02430070 w 0x004"
     },
     "detector": {
         "model_name": "yolo11l",
