@@ -22,6 +22,7 @@ import logging
 import threading
 import signal
 import cv2
+import queue
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 from src.utils import convert_grayscale_to_rgb
@@ -42,6 +43,12 @@ detector = None
 api_client = None
 display = None
 logger = None
+# 添加处理锁，防止重入
+processing_lock = threading.Lock()
+# 添加处理标志，表示是否有产品正在处理中
+processing_active = False
+# 添加UI消息队列
+ui_message_queue = queue.Queue()
 
 # 记录检测统计
 stats = {
@@ -274,16 +281,24 @@ def save_detection_result(image, detection_results, save_dir):
         return None, None
 
 
+# 新增：更新UI的函数
+def update_ui(message_type, *args):
+    """安全地将UI更新请求添加到消息队列"""
+    if display:
+        ui_message_queue.put((message_type, args))
+        return True
+    return False
+
+
 def process_product(stop_conveyor=True):
     """处理一个产品的检测流程"""
-    global stats
+    global stats, processing_active
     
     try:
         # 1. 停止传送带
         if stop_conveyor:
             logger.info("产品到达检测位置，停止传送带")
-            if display:
-                display.set_status("产品到达，准备检测...")
+            update_ui("set_status", "产品到达，准备检测...", False)
             io_controller.stop_conveyor()
         
         # 停止传送带后等待一段时间，确保产品静止
@@ -291,18 +306,17 @@ def process_product(stop_conveyor=True):
 
         # 2. 拍摄图像
         logger.info("捕获产品图像")
-        if display:
-            display.set_status("捕获产品图像...")
+        update_ui("set_status", "捕获产品图像...", False)
             
         # 捕获图像
         image, _ = camera.capture_image(return_array=False, save_path="test_image.jpg")
         
         if image is None:
             logger.error("图像捕获失败")
-            if display:
-                display.set_status("图像捕获失败", is_error=True)
+            update_ui("set_status", "图像捕获失败", True)
             io_controller.start_conveyor()  # 重启传送带继续生产
             return
+            
         # 转换为3通道图像
         image = convert_grayscale_to_rgb(image)
         # numpy.ndarray转换为yolo能识别的图像
@@ -310,8 +324,7 @@ def process_product(stop_conveyor=True):
 
         # 3. 运行检测
         logger.info("执行瑕疵检测")
-        if display:
-            display.set_status("执行瑕疵检测...")
+        update_ui("set_status", "执行瑕疵检测...", False)
         detection_results = detector.detect(image)
         
         # 更新统计
@@ -325,25 +338,20 @@ def process_product(stop_conveyor=True):
             
             # 更新缺陷统计 - 简化为只计数总数
             stats["defect_types"]["defect"] += len(detection_results)
-            
-            if display:
-                display.set_status(f"检测到{len(detection_results)}个瑕疵")
+            update_ui("set_status", f"检测到{len(detection_results)}个瑕疵", False)
         else:
             logger.info("未检测到瑕疵")
-            if display:
-                display.set_status("产品合格，未检测到瑕疵")
+            update_ui("set_status", "产品合格，未检测到瑕疵", False)
 
         # 更新显示界面
-        if display:
-            # 在图像上绘制检测结果
-            display_img = detector.draw_detections(image, detection_results)
-            display.update_image(display_img, detection_results)
+        # 在图像上绘制检测结果
+        display_img = detector.draw_detections(image, detection_results)
+        update_ui("update_image", display_img, detection_results)
         
         # 4. 上传服务器 (如果配置了API客户端)
         if api_client and api_client.api_url and api_client.api_token:
             logger.info("上传检测结果到服务器")
-            if display:
-                display.set_status("上传检测结果到服务器...")
+            update_ui("set_status", "上传检测结果到服务器...", False)
             
             try:
                 # 直接传递图像和检测结果，不保存到本地
@@ -351,43 +359,76 @@ def process_product(stop_conveyor=True):
                 logger.info("结果上传成功")
             except Exception as e:
                 logger.error(f"结果上传失败: {str(e)}")
-                if display:
-                    display.set_status("结果上传失败", is_error=True)
+                update_ui("set_status", "结果上传失败", True)
         
         # 5. 处理缺陷产品
         ejection_config = config.get("ejection", {})
         if has_defect and ejection_config.get("enabled", True) and not args.no_ejection:
             logger.info("启动剔除机构处理缺陷产品")
-            if display:
-                display.set_status("启动剔除机构...")
+            update_ui("set_status", "启动剔除机构...", False)
             duration = ejection_config.get("duration", 0.5)
             io_controller.activate_rejector(duration)
         
         # 6. 重启传送带
         logger.info("重启传送带，准备下一个产品检测")
-        if display:
-            display.set_status("等待下一个产品...")
+        update_ui("set_status", "等待下一个产品...", False)
         io_controller.start_conveyor()
         
     except Exception as e:
         logger.error(f"产品检测过程出现异常: {str(e)}")
-        if display:
-            display.set_status(f"系统错误: {str(e)}", is_error=True)
+        update_ui("set_status", f"系统错误: {str(e)}", True)
         # 确保传送带重新启动
         try:
             io_controller.start_conveyor()
         except:
             pass
+    finally:
+        # 释放处理标志
+        with processing_lock:
+            processing_active = False
 
 
 def position_sensor_callback():
     """位置传感器触发的回调函数"""
+    global processing_lock, processing_active
+    
     if not running:
         return
         
+    # 检查是否已有处理线程在运行
+    with processing_lock:
+        if processing_active:
+            logger.warning("已有产品正在处理中，忽略此次触发")
+            return
+        processing_active = True
+    
     logger.info("位置传感器检测到产品到达")
     # 启动检测流程，使用线程避免阻塞位置传感器处理
     threading.Thread(target=process_product, name="ProductProcessing").start()
+
+
+# 处理UI消息队列的函数
+def process_ui_messages():
+    """处理UI消息队列中的消息"""
+    if not display or not hasattr(display, 'root'):
+        return
+    
+    try:
+        while not ui_message_queue.empty():
+            message_type, args = ui_message_queue.get_nowait()
+            
+            if message_type == "set_status":
+                display.set_status(args[0], args[1])
+            elif message_type == "update_image":
+                display.update_image(args[0], args[1])
+            
+            ui_message_queue.task_done()
+    except Exception as e:
+        logger.error(f"处理UI消息出错: {str(e)}")
+    finally:
+        # 重新安排此函数执行
+        if display and hasattr(display, 'root') and display.running:
+            display.root.after(100, process_ui_messages)
 
 
 def main():
@@ -428,23 +469,42 @@ def main():
         
         logger.info("系统初始化完成，开始检测")
         
-        # 启动显示界面
+        # 根据是否使用显示界面，选择不同的主循环
         if display:
-            # 在新线程中启动显示界面
-            threading.Thread(target=display.run, daemon=True).start()
+            # 在主线程中启动和运行显示界面
             display.set_status("系统就绪，准备开始检测")
-            display.start()  # 启动检测状态
-        
-        # 注册位置传感器回调
-        io_controller.register_position_callback(position_sensor_callback)
-        
-        # 启动传送带
-        logger.info("启动传送带，开始检测流程")
-        io_controller.start_conveyor()
-        
-        # 主循环 - 保持程序运行并处理信号
-        while running:
-            time.sleep(0.5)  # 短暂睡眠避免CPU占用过高
+            display.start()  # 设置界面状态为运行中
+            
+            # 注册位置传感器回调
+            io_controller.register_position_callback(position_sensor_callback)
+            
+            # 启动传送带 - 在工作线程中，避免阻塞GUI
+            def start_conveyor_thread():
+                logger.info("启动传送带，开始检测流程")
+                io_controller.start_conveyor()
+            
+            threading.Thread(target=start_conveyor_thread, daemon=True).start()
+            
+            # 设置UI消息处理
+            display.root.after(100, process_ui_messages)
+            
+            # 在主线程中运行GUI主循环 (这会阻塞，直到窗口关闭)
+            display.run()
+            
+            # GUI关闭后，标记程序结束
+            running = False
+        else:
+            # 无GUI模式 - 使用简单的循环
+            # 注册位置传感器回调
+            io_controller.register_position_callback(position_sensor_callback)
+            
+            # 启动传送带
+            logger.info("启动传送带，开始检测流程")
+            io_controller.start_conveyor()
+            
+            # 主循环 - 保持程序运行并处理信号
+            while running:
+                time.sleep(0.5)  # 短暂睡眠避免CPU占用过高
     
     except KeyboardInterrupt:
         logger.info("用户中断，准备关闭系统")
@@ -453,7 +513,10 @@ def main():
     except Exception as e:
         logger.error(f"系统运行时发生异常: {str(e)}")
         if display:
-            display.set_status(f"系统错误: {str(e)}", is_error=True)
+            try:
+                display.set_status(f"系统错误: {str(e)}", is_error=True)
+            except:
+                pass  # 忽略可能的线程问题
     
     finally:
         # 清理资源
