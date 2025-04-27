@@ -211,7 +211,8 @@ class YOLODetector:
         except Exception as e:
             logger.exception(f"Error during detection: {e}")
             return []
-    
+
+
     def draw_detections(self, image: np.ndarray, detections: List[List[float]]) -> np.ndarray:
         """
         Draw detection bounding boxes on image
@@ -225,8 +226,8 @@ class YOLODetector:
         """
         img = image.copy()
         
-        # 简化为只使用一种颜色
-        color = (0, 0, 255)  # 红色用于标记所有缺陷
+        # 缺陷标记使用红色
+        defect_color = (0, 0, 255)  # 红色用于标记缺陷区域
         
         for det in detections:
             x1, y1, x2, y2, conf, class_id = det
@@ -234,18 +235,29 @@ class YOLODetector:
             # Convert to int
             x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
             
-            # Draw box
-            cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+            # 计算缺陷区域（仅标记估计的缺陷区域而不是整个物体）
+            box_width = x2 - x1
+            box_height = y2 - y1
             
-            # Draw label
+            # 假设缺陷通常位于检测框的中心区域，仅标记中心部分
+            # 可以根据实际情况调整这个比例
+            center_ratio = 0.6  # 中心区域占整个框的比例
+            
+            defect_x1 = int(x1 + (box_width * (1 - center_ratio) / 2))
+            defect_y1 = int(y1 + (box_height * (1 - center_ratio) / 2))
+            defect_x2 = int(x2 - (box_width * (1 - center_ratio) / 2))
+            defect_y2 = int(y2 - (box_height * (1 - center_ratio) / 2))
+            
+            # 标记精确的缺陷区域
+            cv2.rectangle(img, (defect_x1, defect_y1), (defect_x2, defect_y2), defect_color, 2)
+            
+            # 绘制缺陷标签
             label = f"缺陷 {conf:.2f}"
             (label_w, label_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            cv2.rectangle(img, (x1, y1 - label_h - 5), (x1 + label_w, y1), color, -1)
-            cv2.putText(img, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.rectangle(img, (defect_x1, defect_y1 - label_h - 5), (defect_x1 + label_w, defect_y1), defect_color, -1)
+            cv2.putText(img, label, (defect_x1, defect_y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         return img
-
-
 # For testing
 # if __name__ == "__main__":
 #     # Configure logging
