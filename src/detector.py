@@ -19,11 +19,9 @@ class YOLODetector:
     """YOLO object detector with support for YOLOv11 models and Jetson DLA acceleration"""
     
     def __init__(self, model_name: str = "yolo11n", 
-                 conf_thresh: float = 0.25, 
-                 nms_thresh: float = 0.45,
-                 models_dir: str = "../models", 
-                 use_dla: bool = True,
-                 dla_core: int = 0):
+             conf_thresh: float = 0.25, 
+             nms_thresh: float = 0.45,
+             models_dir: str = "../models"):
         """
         Initialize YOLO detector
         
@@ -32,15 +30,11 @@ class YOLODetector:
             conf_thresh: Confidence threshold for detections
             nms_thresh: NMS IoU threshold
             models_dir: Directory to store and load models
-            use_dla: Whether to use DLA acceleration on Jetson
-            dla_core: DLA core to use (0 or 1)
         """
         self.model_name = model_name
         self.conf_thresh = conf_thresh
         self.nms_thresh = nms_thresh
         self.models_dir = models_dir
-        self.use_dla = use_dla
-        self.dla_core = dla_core
         self.model = None
         self.class_names = ["deformation"]
         
@@ -50,60 +44,22 @@ class YOLODetector:
         # Load model
         self._load_model()
         logger.info(f"YOLO detector initialized with model: {self.model_name}")
-        
+
     def _load_model(self):
-        """Load model in preferred format (TensorRT > PyTorch > Download)"""
+        """Load PyTorch model directly without TensorRT conversion"""
         try:
             # Import YOLO from ultralytics
             from ultralytics import YOLO
             
-            # Check for TensorRT engine file
-            engine_path = os.path.join(self.models_dir, f"{self.model_name}.engine")
+            # Check for PyTorch model path
             pt_path = os.path.join(self.models_dir, f"{self.model_name}.pt")
             
-            # Case 1: TensorRT engine file exists
-            if os.path.exists(engine_path):
-                logger.info(f"Loading TensorRT engine model: {engine_path}")
-                self.model = YOLO(engine_path)
+            # Case 1: PyTorch model exists, load directly
+            if os.path.exists(pt_path):
+                logger.info(f"Loading PyTorch model: {pt_path}")
+                self.model = YOLO(pt_path)
                 
-            # Case 2: PyTorch model exists, convert to TensorRT
-            elif os.path.exists(pt_path):
-                logger.info(f"Found PyTorch model {pt_path}, converting to TensorRT engine")
-                
-                # Load PyTorch model
-                model = YOLO(pt_path)
-                
-                # Export to TensorRT with DLA if requested
-                if self.use_dla:
-                    logger.info(f"Exporting model to TensorRT with DLA:{self.dla_core}")
-                    export_path = model.export(
-                        format="engine", 
-                        device=f"dla:{self.dla_core}", 
-                        half=True,  # DLA requires FP16
-                        imgsz=640,
-                        simplify=True,
-                        workspace=4  # GiB workspace for optimization
-                    )
-                else:
-                    logger.info("Exporting model to TensorRT without DLA")
-                    export_path = model.export(
-                        format="engine", 
-                        device=0,  # Use GPU
-                        half=True,  # FP16 for better performance
-                        imgsz=640,
-                        simplify=True,
-                        workspace=4
-                    )
-                
-                # Move exported model to models directory if not already there
-                if os.path.dirname(export_path) != os.path.abspath(self.models_dir):
-                    shutil.move(export_path, engine_path)
-                    logger.info(f"Moved exported model to {engine_path}")
-                
-                # Load the exported TensorRT model
-                self.model = YOLO(engine_path)
-                
-            # Case 3: Download from Ultralytics
+            # Case 2: Download from Ultralytics
             else:
                 logger.info(f"No local model found. Downloading {self.model_name} from Ultralytics")
                 
@@ -113,36 +69,6 @@ class YOLODetector:
                 # Save the PyTorch model for future use
                 self.model.save(pt_path)
                 logger.info(f"Saved PyTorch model to {pt_path}")
-                
-                # Export to TensorRT
-                if self.use_dla:
-                    logger.info(f"Exporting downloaded model to TensorRT with DLA:{self.dla_core}")
-                    export_path = self.model.export(
-                        format="engine", 
-                        device=f"dla:{self.dla_core}", 
-                        half=True,
-                        imgsz=640,
-                        simplify=True,
-                        workspace=4
-                    )
-                else:
-                    logger.info("Exporting downloaded model to TensorRT without DLA")
-                    export_path = self.model.export(
-                        format="engine", 
-                        device=0,  # Use GPU
-                        half=True,
-                        imgsz=640,
-                        simplify=True,
-                        workspace=4
-                    )
-                
-                # Move exported model to models directory if not already there
-                if os.path.dirname(export_path) != os.path.abspath(self.models_dir):
-                    shutil.move(export_path, engine_path)
-                    logger.info(f"Moved exported model to {engine_path}")
-                
-                # Reload the model as TensorRT
-                self.model = YOLO(engine_path)
             
             # Set model parameters
             self.model.conf = self.conf_thresh  # Detection confidence threshold
@@ -152,7 +78,7 @@ class YOLODetector:
             logger.info("Running warmup inference")
             dummy_input = np.zeros((640, 640, 3), dtype=np.uint8)
             _ = self.model(dummy_input)
-            logger.info("Model loaded and ready for inference")
+            logger.info("PyTorch model loaded and ready for inference")
             
         except ImportError:
             logger.error("Failed to import ultralytics. Please install with: pip install ultralytics")
@@ -258,6 +184,45 @@ class YOLODetector:
             cv2.putText(img, label, (defect_x1, defect_y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         return img
+
+    def draw_detection(self, image: np.ndarray, detection: List[float], color=(0, 0, 255)) -> np.ndarray:
+        """
+        在图像上绘制单个检测框
+        
+        Args:
+            image: 输入图像
+            detection: [x1, y1, x2, y2, conf, class_id]格式的检测结果
+            color: BGR颜色元组
+        
+        Returns:
+            带有检测框的图像
+        """
+        if image is None or len(detection) < 6:
+            return image
+            
+        img = image.copy()
+        x1, y1, x2, y2 = map(int, detection[:4])
+        conf = float(detection[4])
+        class_id = int(detection[5])
+        
+        # 绘制矩形框
+        cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
+        
+        # 添加类别标签和置信度
+        class_name = self.class_names[class_id] if class_id < len(self.class_names) else f"类别{class_id}"
+        label = f"{class_name}: {conf:.2f}"
+        
+        # 获取标签文本大小
+        (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
+        
+        # 绘制标签背景
+        cv2.rectangle(img, (x1, y1 - text_height - 5), (x1 + text_width + 5, y1), color, -1)
+        
+        # 绘制标签文本
+        cv2.putText(img, label, (x1 + 3, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+        
+        return img
+# For testing
 # For testing
 # if __name__ == "__main__":
 #     # Configure logging
@@ -266,29 +231,28 @@ class YOLODetector:
 #         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 #     )
     
-#     # Test with local image if available
-#     test_img_path = "../data/images/bus.jpg"
-#     if not os.path.exists(test_img_path):
-#         logger.warning(f"Test image not found: {test_img_path}")
-#         # Try to find another image
-#         for img_ext in ['.jpg', '.jpeg', '.png', '.bmp']:
-#             found_imgs = [f for f in os.listdir('.') if f.lower().endswith(img_ext)]
-#             if found_imgs:
-#                 test_img_path = found_imgs[0]
-#                 logger.info(f"Using alternative test image: {test_img_path}")
-#                 break
-#         else:
-#             logger.error("No test images found")
-#             exit(1)
-        
 #     try:
 #         # Initialize detector with YOLOv11n model
 #         # Options include: yolov11n, yolov11s, yolov11m, yolov11l
 #         detector = YOLODetector(
 #             model_name="yolo11l", 
-#             conf_thresh=0.25, 
-#             use_dla=True
+#             conf_thresh=0.25
 #         )
+        
+#         # Test with local image if available
+#         test_img_path = "../data/images/bus.jpg"
+#         if not os.path.exists(test_img_path):
+#             logger.warning(f"Test image not found: {test_img_path}")
+#             # Try to find another image
+#             for img_ext in ['.jpg', '.jpeg', '.png', '.bmp']:
+#                 found_imgs = [f for f in os.listdir('.') if f.lower().endswith(img_ext)]
+#                 if found_imgs:
+#                     test_img_path = found_imgs[0]
+#                     logger.info(f"Using alternative test image: {test_img_path}")
+#                     break
+#             else:
+#                 logger.error("No test images found")
+#                 exit(1)
         
 #         # Load and process image
 #         img = cv2.imread(test_img_path)
@@ -310,7 +274,6 @@ class YOLODetector:
 #         output_path = "detection_result.jpg"
 #         cv2.imwrite(output_path, result_img)
 #         logger.info(f"Result saved to {output_path}")
-        
         
 #     except Exception as e:
 #         logger.exception(f"Error during test: {e}")

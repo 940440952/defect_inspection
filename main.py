@@ -139,8 +139,7 @@ def initialize_system(config: Dict[str, Any], args):
             model_name=detector_config.get("model_name", "yolo11l"),
             conf_thresh=detector_config.get("confidence_threshold", 0.25),
             nms_thresh=detector_config.get("nms_threshold", 0.45),
-            models_dir=detector_config.get("models_dir", "models"),
-            use_dla=detector_config.get("use_dla", True)
+            models_dir=detector_config.get("models_dir", "models\\detector"),
         )
         # 设置类别名称为只有一种缺陷
         detector.class_names = detector_config.get("class_names", ["defect"])
@@ -303,7 +302,7 @@ def process_product(stop_conveyor=True):
             io_controller.stop_conveyor()
         
         # 停止传送带后等待一段时间，确保产品静止
-        time.sleep(0.5)
+        time.sleep(0.3)
 
         # 2. 拍摄图像
         logger.info("捕获产品图像")
