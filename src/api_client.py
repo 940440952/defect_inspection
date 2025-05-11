@@ -95,7 +95,7 @@ class APIClient:
                 if not project_id:
                     logger.info(f"Project '{project_name}' not found, creating new project")
                     project_id = self._find_or_create_project(project_name)
-                    
+
                 if project_id:
                     self.project_id = project_id
                     self.set_active_project(project_id)
@@ -112,6 +112,9 @@ class APIClient:
                     logger.error(f"Failed to initialize project: {project_name}")
             except Exception as e:
                 logger.error(f"Failed to initialize connection: {e}")
+        
+        
+        
         
     def _init_connection(self, project_name: str = "Defect Inspection") -> Optional[int]:
         """
@@ -268,6 +271,8 @@ class APIClient:
                 
         except ConnectionError:
             logger.warning("Connection test failed - server unreachable")
+            # 打印ConnectionError
+            print(ConnectionError)
             return False
         except RequestException as e:
             logger.warning(f"Connection test failed: {str(e)}")
@@ -297,6 +302,7 @@ class APIClient:
         try:
             # Use specified project ID or default
             active_project_id = project_id or self.project_id
+            
             if not active_project_id:
                 logger.error("No project ID specified or available")
                 return False

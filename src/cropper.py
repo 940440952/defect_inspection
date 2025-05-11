@@ -69,6 +69,8 @@ class ImageCropper:
             # 检查PyTorch模型路径
             pt_path = os.path.join(self.models_dir, f"{self.model_name}.pt")
             
+            print(f"cropper模型路径: {pt_path}")
+            
             # 情况1：PyTorch模型存在，直接加载
             if os.path.exists(pt_path):
                 logger.info(f"加载PyTorch模型: {pt_path}")

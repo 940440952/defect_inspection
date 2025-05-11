@@ -26,6 +26,7 @@ import cv2
 import queue
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+from src.cropper import ImageCropper
 from src.utils import convert_grayscale_to_rgb
 
 # 导入系统模块
@@ -41,6 +42,7 @@ running = True
 io_controller = None
 camera = None
 detector = None
+cropper = None
 api_client = None
 display = None
 logger = None
@@ -87,7 +89,7 @@ def setup_signal_handlers():
 
 def initialize_system(config: Dict[str, Any], args):
     """初始化系统各组件"""
-    global io_controller, camera, detector, api_client, display, stats, logger
+    global io_controller, camera, detector, api_client, display, stats, logger, cropper
     
     logger.info("正在初始化系统组件...")
     stats["system_start_time"] = datetime.now()
@@ -132,6 +134,20 @@ def initialize_system(config: Dict[str, Any], args):
         logger.error(f"摄像头初始化失败: {str(e)}")
         return False
     
+    # 3. 初始化裁剪器
+    try:
+        cropper_config = config.get("cropper", {})  # 默认使用detector的配置
+        cropper = ImageCropper(
+            model_name=cropper_config.get("cropper_model_name","yolo11l"),
+            conf_threshold=cropper_config.get("cropper_confidence_threshold", 0.25),
+            nms_threshold=cropper_config.get("nms_threshold", 0.45),
+            models_dir=cropper_config.get("models_dir", "/home/gtm/defect_inspection/models/cropper"),
+        )
+        logger.info("裁剪器初始化成功")
+    except Exception as e:
+        logger.error(f"裁剪器初始化失败: {str(e)}")
+        return False
+
     # 3. 初始化检测模型
     try:
         detector_config = config.get("detector", {})
@@ -139,7 +155,7 @@ def initialize_system(config: Dict[str, Any], args):
             model_name=detector_config.get("model_name", "yolo11l"),
             conf_thresh=detector_config.get("confidence_threshold", 0.25),
             nms_thresh=detector_config.get("nms_threshold", 0.45),
-            models_dir=detector_config.get("models_dir", "models\\detector"),
+            models_dir=detector_config.get("models_dir", "/home/gtm/defect_inspection/models/detector"),
         )
         # 设置类别名称为只有一种缺陷
         detector.class_names = detector_config.get("class_names", ["defect"])
@@ -322,31 +338,84 @@ def process_product(stop_conveyor=True):
         # numpy.ndarray转换为yolo能识别的图像
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # 3. 运行检测
-        logger.info("执行瑕疵检测")
-        update_ui("set_status", "执行瑕疵检测...", False)
-        detection_results = detector.detect(image)
+        # 3. 首先进行裁剪检测
+        logger.info("执行图像裁剪")
+        update_ui("set_status", "执行图像裁剪检测...", False)
+        
+        # 裁剪检测结果
+        cropped_results = cropper.detect_and_crop(image)
+        
+        # 如果裁剪检测到缺陷区域
+        all_detections = []
+        crop_detections = []
+        
+        if cropped_results:
+            logger.info(f"裁剪器检测到{len(cropped_results)}个潜在区域")
+            update_ui("set_status", f"检测到{len(cropped_results)}个潜在区域", False)
+            
+            # 4. 对裁剪的区域进行详细检测
+            for crop_idx, crop_result in enumerate(cropped_results):
+                crop_img = crop_result['crop']
+                crop_box = crop_result['box']
+                
+                # 对裁剪图像进行检测
+                detections = detector.detect(crop_img)
+                crop_detections.append(detections)  # 保存原始检测结果
+                
+                if detections:
+                    # 调整检测坐标到原始图像坐标系
+                    for det in detections:
+                        # 原始检测格式: [x1, y1, x2, y2, conf, class_id]
+                        # 调整坐标: 加上裁剪区域的左上角坐标
+                        x1, y1 = det[0] + crop_box[0], det[1] + crop_box[1]
+                        x2, y2 = det[2] + crop_box[0], det[3] + crop_box[1]
+                        all_detections.append([x1, y1, x2, y2, det[4], det[5]])
+        else:
+            # 如果裁剪器未检测到区域，则跳过检测步骤
+            logger.info("未检测到潜在区域，无需进一步检测")
+            all_detections = []
+            crop_detections = []
+            cropped_results = []
         
         # 更新统计
         stats["total_inspected"] += 1
         
         # 检测到缺陷
-        has_defect = len(detection_results) > 0
+        has_defect = len(all_detections) > 0
         if has_defect:
             stats["defects_detected"] += 1
-            logger.info(f"检测到{len(detection_results)}个瑕疵")
+            logger.info(f"检测到{len(all_detections)}个瑕疵")
             
             # 更新缺陷统计 - 简化为只计数总数
-            stats["defect_types"]["defect"] += len(detection_results)
-            update_ui("set_status", f"检测到{len(detection_results)}个瑕疵", False)
+            stats["defect_types"]["defect"] += len(all_detections)
+            update_ui("set_status", f"检测到{len(all_detections)}个瑕疵", False)
         else:
             logger.info("未检测到瑕疵")
             update_ui("set_status", "产品合格，未检测到瑕疵", False)
 
         # 更新显示界面
-        # 在图像上绘制检测结果
-        display_img = detector.draw_detections(image, detection_results)
-        update_ui("update_image", display_img, detection_results)
+        # 整合检测结果用于显示
+        from src.display_utils import draw_combined_detections, merge_detection_results
+        
+        # 如果有裁剪结果，使用增强版绘制
+        if cropped_results:
+            # 将检测结果组织为字典
+            detection_dict = merge_detection_results(cropped_results, crop_detections)
+            
+            # 使用增强版绘制函数
+            display_img = draw_combined_detections(
+                image, 
+                cropped_results, 
+                detection_dict,
+                class_names=detector.class_names
+            )
+        else:
+            # 否则使用原有绘制函数
+            display_img = detector.draw_detections(image, all_detections)
+            
+        # 更新UI
+        update_ui("update_image", display_img, all_detections)
+
         
         # 4. 上传服务器 (如果配置了API客户端)
         if api_client and api_client.api_url and api_client.api_token:
@@ -355,7 +424,7 @@ def process_product(stop_conveyor=True):
             
             try:
                 # 直接传递图像和检测结果，不保存到本地
-                api_client.import_to_label_studio(image, detection_results, is_path=False)
+                api_client.import_to_label_studio(image, all_detections, is_path=False)
                 logger.info("结果上传成功")
             except Exception as e:
                 logger.error(f"结果上传失败: {str(e)}")
