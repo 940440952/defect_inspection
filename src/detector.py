@@ -19,9 +19,10 @@ class YOLODetector:
     """YOLO object detector with support for YOLOv11 models and Jetson DLA acceleration"""
     
     def __init__(self, model_name: str = "yolo11n", 
-             conf_thresh: float = 0.25, 
-             nms_thresh: float = 0.45,
-             models_dir: str = "../models"):
+             models_dir: str = "../models",
+             filter_enabled: bool = True,
+             min_area: float = 100,
+             confidence_threshold: float = 0.25):
         """
         Initialize YOLO detector
         
@@ -32,10 +33,11 @@ class YOLODetector:
             models_dir: Directory to store and load models
         """
         self.model_name = model_name
-        self.conf_thresh = conf_thresh
-        self.nms_thresh = nms_thresh
         self.models_dir = models_dir
         self.model = None
+        self.filter_enabled = filter_enabled
+        self.min_area = min_area
+        self.confidence_threshold = confidence_threshold
         self.class_names = ["deformation"]
         
         # Create models directory if it doesn't exist
@@ -45,6 +47,12 @@ class YOLODetector:
         self._load_model()
         logger.info(f"YOLO detector initialized with model: {self.model_name}")
 
+        # 记录过滤设置
+        if self.filter_enabled:
+            logger.info(f"检测结果过滤已启用: 最小面积={self.min_area}像素, 最小置信度={self.confidence_threshold:.2f}")
+        else:
+            logger.info("检测结果过滤已禁用")
+            
     def _load_model(self):
         """Load PyTorch model directly without TensorRT conversion"""
         try:
@@ -70,10 +78,6 @@ class YOLODetector:
                 self.model.save(pt_path)
                 logger.info(f"Saved PyTorch model to {pt_path}")
             
-            # Set model parameters
-            self.model.conf = self.conf_thresh  # Detection confidence threshold
-            self.model.iou = self.nms_thresh    # NMS IoU threshold
-            
             # Run a warmup inference
             logger.info("Running warmup inference")
             dummy_input = np.zeros((640, 640, 3), dtype=np.uint8)
@@ -87,31 +91,32 @@ class YOLODetector:
             logger.error(f"Error loading model: {e}")
             raise
     
-    def detect(self, image: np.ndarray) -> List[List[float]]:
+    def detect(self, image: np.ndarray, apply_filter: bool = None) -> List[List[float]]:
         """
-        Detect objects in image
+        在图像中检测物体，并根据初始化参数自动进行过滤
         
         Args:
-            image: Input image in BGR format (HWC)
+            image: 输入图像 (BGR格式, HWC)
+            apply_filter: 是否应用过滤，None表示使用初始化时的filter_enabled设置
             
         Returns:
-            List of detections [x1, y1, x2, y2, conf, class_id]
+            检测结果列表，格式为 [[x1, y1, x2, y2, conf, class_id], ...]
         """
         if image is None or not isinstance(image, np.ndarray):
-            logger.error("Invalid input image")
+            logger.error("无效的输入图像")
             return []
             
         try:
-            # Make a copy of the image to avoid modifications
+            # 创建图像副本避免修改原图
             img = image.copy()
             
-            # Run inference
+            # 运行推理
             start_time = time.time()
             results = self.model(img, verbose=False)
             inference_time = (time.time() - start_time) * 1000
-            logger.debug(f"Inference time: {inference_time:.2f}ms")
+            logger.debug(f"推理时间: {inference_time:.2f}ms")
             
-            # Convert results to standard format [x1, y1, x2, y2, conf, class_id]
+            # 转换结果为标准格式 [x1, y1, x2, y2, conf, class_id]
             detections = []
             
             for result in results:
@@ -120,24 +125,58 @@ class YOLODetector:
                 if len(boxes) == 0:
                     continue
                     
-                # Get boxes, confidence scores and class IDs
+                # 获取检测框、置信度和类别ID
                 xyxy = boxes.xyxy.cpu().numpy()  # x1, y1, x2, y2
                 confs = boxes.conf.cpu().numpy()
                 cls_ids = boxes.cls.cpu().numpy()
                 
-                # Combine into detections list
+                # 组合为检测结果列表
                 for i in range(len(xyxy)):
                     x1, y1, x2, y2 = xyxy[i]
                     conf = confs[i]
                     cls_id = cls_ids[i]
                     detections.append([x1, y1, x2, y2, conf, cls_id])
             
+            # 确定是否应用过滤
+            should_filter = self.filter_enabled if apply_filter is None else apply_filter
+            
+            # 如果需要过滤，就应用过滤条件
+            if should_filter and detections:
+                # 记录原始检测数量
+                orig_count = len(detections)
+                filtered_results = []
+                filtered_count = 0
+                
+                for detection in detections:
+                    x1, y1, x2, y2, conf, class_id = detection
+                    
+                    # 计算面积
+                    area = (x2 - x1) * (y2 - y1)
+                    
+                    # 应用过滤条件
+                    area_ok = area >= self.min_area
+                    conf_ok = conf >= self.confidence_threshold
+                    
+                    if area_ok and conf_ok:
+                        filtered_results.append(detection)
+                    else:
+                        filtered_count += 1
+                        class_id_int = int(class_id)
+                        class_name = self.class_names[class_id_int] if class_id_int < len(self.class_names) else f"类别{class_id_int}"
+                        logger.debug(f"过滤掉检测结果: 类别={class_name}, "
+                                    f"面积={area:.1f}像素, 置信度={conf:.2f}")
+                
+                if filtered_count > 0:
+                    logger.info(f"过滤掉 {filtered_count}/{orig_count} 个检测结果 "
+                            f"(面积<{self.min_area} 或 置信度<{self.confidence_threshold:.2f})")
+                    
+                detections = filtered_results
+            
             return detections
             
         except Exception as e:
-            logger.exception(f"Error during detection: {e}")
+            logger.exception(f"检测过程出错: {e}")
             return []
-
 
     def draw_detections(self, image: np.ndarray, detections: List[List[float]]) -> np.ndarray:
         """
@@ -222,7 +261,7 @@ class YOLODetector:
         cv2.putText(img, label, (x1 + 3, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
         
         return img
-# For testing
+
 # For testing
 # if __name__ == "__main__":
 #     # Configure logging

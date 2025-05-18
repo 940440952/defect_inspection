@@ -148,23 +148,32 @@ def initialize_system(config: Dict[str, Any], args):
         logger.error(f"裁剪器初始化失败: {str(e)}")
         return False
 
-    # 3. 初始化检测模型
+    # 4. 初始化检测模型
     try:
         detector_config = config.get("detector", {})
+        # 获取检测器过滤配置
+        filter_config = detector_config.get("filter", {})
+
         detector = DefectDetector(
             model_name=detector_config.get("model_name", "yolo11l"),
-            conf_thresh=detector_config.get("confidence_threshold", 0.25),
-            nms_thresh=detector_config.get("nms_threshold", 0.45),
             models_dir=detector_config.get("models_dir", "/home/gtm/defect_inspection/models/detector"),
+            filter_enabled=filter_config.get("enabled", True),
+            min_area=filter_config.get("min_area", 100),
+            confidence_threshold=filter_config.get("confidence_threshold", 0.25)
         )
-        # 设置类别名称为只有一种缺陷
-        detector.class_names = detector_config.get("class_names", ["defect"])
+            
+        # 设置类别名称
+        class_names = detector_config.get("class_names", ["defect"])
+        detector.class_names = class_names
+        # 更新统计数据中的缺陷类型计数
+        stats["defect_types"] = {name: 0 for name in class_names}
+        
         logger.info("检测模型初始化成功")
     except Exception as e:
         logger.error(f"检测模型初始化失败: {str(e)}")
         return False
     
-    # 4. 初始化API客户端
+    # 5. 初始化API客户端
     try:
         api_config = config.get("api", {})
 
@@ -188,7 +197,7 @@ def initialize_system(config: Dict[str, Any], args):
         logger.warning("继续运行系统，但无法上传检测结果")
         api_client = None
     
-    # 5. 初始化显示界面(可选)
+    # 6. 初始化显示界面(可选)
     if not args.no_display and config.get("display", {}).get("enabled", True):
         try:
             display_config = config.get("display", {})
@@ -199,7 +208,7 @@ def initialize_system(config: Dict[str, Any], args):
             # 显示界面失败不阻止系统运行
             display = None
     
-    # 6. 测试流水线(可选)
+    # 7. 测试流水线(可选)
     if args.test_pipeline:
         logger.info("开始测试流水线...")
         try:
@@ -352,7 +361,7 @@ def process_product(stop_conveyor=True):
         if cropped_results:
             logger.info(f"裁剪器检测到{len(cropped_results)}个潜在区域")
             update_ui("set_status", f"检测到{len(cropped_results)}个潜在区域", False)
-            
+        
             # 4. 对裁剪的区域进行详细检测
             for crop_idx, crop_result in enumerate(cropped_results):
                 crop_img = crop_result['crop']
@@ -360,7 +369,9 @@ def process_product(stop_conveyor=True):
                 
                 # 对裁剪图像进行检测
                 detections = detector.detect(crop_img)
-                crop_detections.append(detections)  # 保存原始检测结果
+       
+                # 保存原始检测结果
+                crop_detections.append(detections)  
                 
                 if detections:
                     # 调整检测坐标到原始图像坐标系

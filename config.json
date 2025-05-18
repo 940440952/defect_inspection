@@ -16,9 +16,13 @@
     },
     "detector": {
         "model_name": "detector",
-        "confidence_threshold": 0.25,
-        "class_names": ["defect"],
-        "models_dir": "/home/gtm/defect_inspection/models/detector"
+        "class_names": ["小划痕", "小污点", "大划痕", "大污点", "堵孔"],
+        "models_dir": "/home/gtm/defect_inspection/models/detector",
+        "filter": {
+            "min_area": 100,
+            "confidence_threshold": 0.3,        
+            "enabled": true          
+        }
     },
     "api": {
         "api_url": "http://192.168.1.59:8080",

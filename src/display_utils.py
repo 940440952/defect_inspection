@@ -18,7 +18,7 @@ def draw_combined_detections(
     crop_color: Tuple[int, int, int] = (0, 255, 0),  # 裁剪框颜色(绿色)
     defect_color: Tuple[int, int, int] = (0, 0, 255),  # 瑕疵框颜色(红色)
     thickness: int = 2,
-    font_scale: float = 0.5,
+    font_scale: float = 1,
     show_confidence: bool = True
 ) -> np.ndarray:
     """
