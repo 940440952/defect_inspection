@@ -19,8 +19,8 @@
         "class_names": ["小划痕", "小污点", "大划痕", "大污点", "堵孔"],
         "models_dir": "/home/gtm/defect_inspection/models/detector",
         "filter": {
-            "min_area": 100,
-            "confidence_threshold": 0.3,        
+            "min_area": 300,
+            "confidence_threshold": 0.5,        
             "enabled": true          
         }
     },

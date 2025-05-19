@@ -10,6 +10,105 @@ import numpy as np
 from typing import List, Dict, Optional, Tuple, Any
 
 
+def draw_text_with_pil(image, text, position, font_size=20, color=(255, 255, 255), bg_color=None, stroke_width=1):
+    """
+    使用PIL在图像上绘制中文文本，解决中文和数字混合显示问题
+    
+    Args:
+        image: 输入图像(OpenCV格式,BGR)
+        text: 要绘制的文本
+        position: 文本位置(x, y)
+        font_size: 字体大小
+        color: 文本颜色(RGB)
+        bg_color: 背景颜色(RGB)，None表示无背景
+        stroke_width: 文字描边宽度，0表示无描边
+        
+    Returns:
+        绘制了文本的图像(OpenCV格式,BGR)
+    """
+    from PIL import Image, ImageDraw, ImageFont
+    import numpy as np
+    import os
+    
+    # 转换为PIL图像
+    pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+    
+    # 确保文本是字符串类型
+    text = str(text)
+    
+    # 先尝试加载支持中文的字体
+    chinese_font_paths = [
+        "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",             # 文泉驿微米黑
+        "/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc",                 # 文泉驿正黑
+        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",  # Ubuntu
+        "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",              # Noto Sans CJK
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",     # 另一种 Noto 路径
+        "C:/Windows/Fonts/simhei.ttf",                                # Windows 黑体
+        "C:/Windows/Fonts/simfang.ttf",                               # Windows 仿宋
+        "/usr/share/fonts/truetype/arphic/uming.ttc",                 # AR PL UMing
+        "/usr/share/fonts/truetype/arphic/ukai.ttc",                  # AR PL UKai
+    ]
+    
+    # 尝试加载中文字体
+    font = None
+    for font_path in chinese_font_paths:
+        if os.path.exists(font_path):
+            try:
+                font = ImageFont.truetype(font_path, font_size)
+                break
+            except Exception:
+                continue
+    
+    # 如果中文字体加载失败，尝试加载任何系统字体
+    if font is None:
+        try:
+            # 在Linux上尝试使用fc-list查找字体
+            import subprocess
+            fonts_list = subprocess.check_output(['fc-list', ':lang=zh', 'file']).decode('utf-8').strip().split('\n')
+            if fonts_list:
+                for font_line in fonts_list:
+                    font_path = font_line.split(':')[0]
+                    try:
+                        font = ImageFont.truetype(font_path, font_size)
+                        break
+                    except:
+                        continue
+        except:
+            pass
+    
+    # 如果还是无法加载字体，使用默认字体
+    if font is None:
+        font = ImageFont.load_default()
+        # 放大默认字体，以便更清晰
+        font_size = max(10, font_size // 2)
+    
+    # 测量文本尺寸
+    try:
+        # 新版PIL使用textbbox
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_width = bbox[2] - bbox[0]
+        text_height = bbox[3] - bbox[1]
+    except AttributeError:
+        # 旧版PIL使用textsize
+        text_width, text_height = draw.textsize(text, font=font)
+    
+    # 绘制背景（如果指定了背景颜色）
+    x, y = position
+    if bg_color is not None:
+        bg_x1, bg_y1 = x, y
+        bg_x2, bg_y2 = x + text_width, y + text_height
+        draw.rectangle([(bg_x1, bg_y1), (bg_x2, bg_y2)], fill=bg_color)
+    
+    # 绘制文本（带描边）
+    if stroke_width > 0:
+        draw.text((x, y), text, font=font, fill=color, stroke_width=stroke_width, stroke_fill=(0, 0, 0))
+    else:
+        draw.text((x, y), text, font=font, fill=color)
+    
+    # 转换回OpenCV图像
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
 def draw_combined_detections(
     image: np.ndarray, 
     crop_results: List[Dict], 
@@ -18,8 +117,9 @@ def draw_combined_detections(
     crop_color: Tuple[int, int, int] = (0, 255, 0),  # 裁剪框颜色(绿色)
     defect_color: Tuple[int, int, int] = (0, 0, 255),  # 瑕疵框颜色(红色)
     thickness: int = 2,
-    font_scale: float = 1,
-    show_confidence: bool = True
+    font_scale: float = 2,
+    show_confidence: bool = True,
+    show_labels: bool = True
 ) -> np.ndarray:
     """
     在原始图像上绘制裁剪区域和检测结果
@@ -61,31 +161,20 @@ def draw_combined_detections(
             thickness
         )
         
-        # 添加裁剪区域编号
-        label = f"区域 #{i+1}"
-        (text_width, text_height), _ = cv2.getTextSize(
-            label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
-        )
-        
-        # 绘制标签背景
-        cv2.rectangle(
-            result_image, 
-            (x1, y1 - text_height - 5), 
-            (x1 + text_width + 5, y1), 
-            crop_color, 
-            -1  # 填充矩形
-        )
-        
-        # 绘制标签文本
-        cv2.putText(
-            result_image, 
-            label, 
-            (x1 + 3, y1 - 5), 
-            cv2.FONT_HERSHEY_SIMPLEX, 
-            font_scale, 
-            (0, 0, 0), 
-            thickness
-        )
+        # 只有启用标签显示时才绘制
+        if show_labels:
+            # 添加裁剪区域编号
+            label = f"区域 #{i+1}"
+            # 使用PIL绘制中文标签
+            result_image = draw_text_with_pil(
+                result_image,
+                label,
+                (x1 + 3, y1 - 15),
+                font_size=int(font_scale * 20),
+                color=(255, 255, 255),  # 白色文本
+                bg_color=None,
+                stroke_width=2  # 添加描边，提高可读性
+            )
         
         # 2. 绘制该裁剪区域内的瑕疵检测结果
         detections = detection_results_dict.get(i, [])
@@ -98,45 +187,48 @@ def draw_combined_detections(
             confidence = float(det[4])
             class_id = int(det[5]) if len(det) > 5 else 0
             
+            # 为不同类型定义颜色 (BGR格式)
+            colors = [
+                (0, 0, 255),     # 红色 - 小划痕
+                (0, 127, 255),   # 橙色 - 小污点
+                (0, 255, 0),     # 绿色 - 大划痕
+                (255, 0, 0),     # 蓝色 - 大污点
+                (255, 0, 255),   # 紫色 - 堵孔
+                (255, 255, 0),   # 青色 - 其他类型
+            ]
+            
+            # 选择颜色 (防止索引越界)
+            det_color = colors[class_id % len(colors)]
+            
             # 绘制瑕疵框
             cv2.rectangle(
                 result_image, 
                 (det_x1, det_y1), (det_x2, det_y2), 
-                defect_color, 
+                det_color, 
                 thickness
             )
             
-            # 准备标签文本
-            class_name = class_names[class_id] if class_id < len(class_names) else f"类别{class_id}"
-            if show_confidence:
-                label = f"{class_name}: {confidence:.2f}"
-            else:
-                label = class_name
-                
-            # 获取文本大小
-            (text_width, text_height), _ = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
-            )
-            
-            # 绘制标签背景
-            cv2.rectangle(
-                result_image, 
-                (det_x1, det_y1 - text_height - 5), 
-                (det_x1 + text_width + 5, det_y1), 
-                defect_color, 
-                -1  # 填充矩形
-            )
-            
-            # 绘制标签文本
-            cv2.putText(
-                result_image, 
-                label, 
-                (det_x1 + 3, det_y1 - 5), 
-                cv2.FONT_HERSHEY_SIMPLEX, 
-                font_scale, 
-                (255, 255, 255),  # 白色文本
-                thickness
-            )
+            # 只有启用标签显示时才绘制
+            if show_labels:
+                # 准备标签文本
+                class_name = class_names[class_id] if class_id < len(class_names) else f"类别{class_id}"
+                if show_confidence:
+                    confidence_value = float(confidence)
+                    confidence_str = f"{confidence_value:.2f}"
+                    label = f"{class_name}：{confidence_str}"
+                else:
+                    label = class_name
+                    
+                # 使用PIL绘制中文标签
+                result_image = draw_text_with_pil(
+                    result_image,
+                    label,
+                    (det_x1 + 3, det_y1 - 15),
+                    font_size=int(font_scale * 20),
+                    color=(255, 255, 255),  # 白色文本
+                    bg_color=None,
+                    stroke_width=2  # 添加描边，提高可读性
+                )
     
     # 3. 如果有未与裁剪区域关联的检测结果，直接绘制
     if -1 in detection_results_dict:
@@ -145,48 +237,40 @@ def draw_combined_detections(
             confidence = float(det[4])
             class_id = int(det[5]) if len(det) > 5 else 0
             
+            # 选择颜色
+            det_color = colors[class_id % len(colors)]
+            
             # 绘制检测框
             cv2.rectangle(
                 result_image, 
                 (x1, y1), (x2, y2), 
-                defect_color, 
+                det_color, 
                 thickness
             )
             
-            # 准备标签文本
-            class_name = class_names[class_id] if class_id < len(class_names) else f"类别{class_id}"
-            if show_confidence:
-                label = f"{class_name}: {confidence:.2f}"
-            else:
-                label = class_name
-                
-            # 获取文本大小
-            (text_width, text_height), _ = cv2.getTextSize(
-                label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness
-            )
-            
-            # 绘制标签背景
-            cv2.rectangle(
-                result_image, 
-                (x1, y1 - text_height - 5), 
-                (x1 + text_width + 5, y1), 
-                defect_color, 
-                -1  # 填充矩形
-            )
-            
-            # 绘制标签文本
-            cv2.putText(
-                result_image, 
-                label, 
-                (x1 + 3, y1 - 5), 
-                cv2.FONT_HERSHEY_SIMPLEX, 
-                font_scale, 
-                (255, 255, 255),  # 白色文本
-                thickness
-            )
+            # 只有启用标签显示时才绘制
+            if show_labels:
+                # 准备标签文本
+                class_name = class_names[class_id] if class_id < len(class_names) else f"类别{class_id}"
+                if show_confidence:
+                    confidence_value = float(confidence)
+                    confidence_str = f"{confidence_value:.2f}"
+                    label = f"{class_name}：{confidence_str}"
+                else:
+                    label = class_name
+                    
+                # 使用PIL绘制中文标签
+                result_image = draw_text_with_pil(
+                    result_image,
+                    label,
+                    (det_x1 + 3, det_y1 - 15),
+                    font_size=int(font_scale * 20),
+                    color=(255, 255, 255),  # 白色文本
+                    bg_color=None,
+                    stroke_width=2  # 添加描边，提高可读性
+                )
     
     return result_image
-
 
 def merge_detection_results(
     crop_results: List[Dict], 

@@ -28,12 +28,13 @@ logger = logging.getLogger("DefectInspection.Display")
 class DefectDisplay:
     """瑕疵检测显示界面类"""
     
-    def __init__(self, window_title="瑕疵检测系统"):
+    def __init__(self, window_title="瑕疵检测系统", class_names=None):
         """
         初始化显示界面
         
         Args:
             window_title: 窗口标题
+            class_names: 缺陷类型名称列表
         """
         self.window_title = window_title
         self.root = None
@@ -42,15 +43,22 @@ class DefectDisplay:
         self.photo_image = None  # 保存Tkinter PhotoImage对象
         self.latest_results = []
         self._error_status = False  # 新增：错误状态标志
+        
+        # 使用提供的类别名称或默认为空列表
+        self.class_names = class_names if class_names else []
+        
+        # 初始化统计信息
         self.stats = {
             "total_inspections": 0,
             "defect_count": 0,
             "start_time": time.time(),
             "last_detection_time": 0,
-            "defect_types": {
-                "defect": 0  # 简化为只有一种缺陷类型
-            }
+            "defect_types": {}
         }
+        
+        # 为每个类别创建计数器
+        for class_name in self.class_names:
+            self.stats["defect_types"][class_name] = 0
         
         # 系统状态
         self.system_status = "准备就绪"
@@ -73,7 +81,15 @@ class DefectDisplay:
         # 创建主窗口
         self.root = tk.Tk()
         self.root.title(self.window_title)
-        self.root.geometry("1200x700")
+        
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        self.root.geometry(f"{screen_width}x{screen_height}+0+0")
+
+        self.root.attributes("-fullscreen", True)
+        self.root.bind("<Escape>", lambda event: self.toggle_fullscreen())
+
+
         self.root.configure(bg="#333333")
         
         # 配置网格权重，使左右两列可以适当调整大小
@@ -146,7 +162,7 @@ class DefectDisplay:
         self.ui_elements["-DEFECT-RATE-"] = Label(stats_content, text="0.0%", font=("微软雅黑", 10), bg="#333333", fg="white")
         self.ui_elements["-DEFECT-RATE-"].grid(row=4, column=1, sticky="w", padx=(5, 0), pady=2)
         
-        # 2. 缺陷类型统计框架 - 简化为只显示一种缺陷
+        # 2. 缺陷类型统计框架
         defect_frame = Frame(right_frame, bg="#333333", padx=8, pady=8, relief=tk.GROOVE, bd=2)
         defect_frame.pack(fill=tk.X, expand=True, pady=(0, 10))
         
@@ -156,22 +172,42 @@ class DefectDisplay:
         defect_content = Frame(defect_frame, bg="#333333")
         defect_content.pack(fill=tk.X, expand=True)
         
-        # 只添加一种缺陷类型
-        defect_id = "defect"
-        defect_name = "瑕疵"
-        
-        # 创建缺陷类型标签
-        Label(defect_content, text=f"{defect_name}:", font=("微软雅黑", 10), bg="#333333", fg="white").grid(row=0, column=0, sticky="w", pady=4)
-        
-        # 创建计数标签
-        self.ui_elements[f"-{defect_id.upper()}-COUNT-"] = Label(defect_content, text="0", font=("微软雅黑", 10), bg="#333333", fg="white", width=5)
-        self.ui_elements[f"-{defect_id.upper()}-COUNT-"].grid(row=0, column=1, sticky="w", padx=(5, 10), pady=4)
-        
-        # 创建进度条
-        self.progress_vars[defect_id] = tk.DoubleVar(value=0)
-        progress = ttk.Progressbar(defect_content, variable=self.progress_vars[defect_id], length=150, mode="determinate", maximum=100)
-        progress.grid(row=0, column=2, sticky="w", pady=4)
-        self.ui_elements[f"-{defect_id.upper()}-PROGRESS-"] = progress
+        # 根据类型名称创建统计行
+        if self.class_names:
+            for i, class_name in enumerate(self.class_names):
+                # 创建一个唯一标识符
+                defect_id = f"defect_{i}"
+                
+                # 创建缺陷类型标签
+                Label(defect_content, text=f"{class_name}:", font=("微软雅黑", 10), bg="#333333", fg="white").grid(row=i, column=0, sticky="w", pady=2)
+                
+                # 创建计数标签
+                self.ui_elements[f"-{defect_id.upper()}-COUNT-"] = Label(defect_content, text="0", font=("微软雅黑", 10), bg="#333333", fg="white", width=5)
+                self.ui_elements[f"-{defect_id.upper()}-COUNT-"].grid(row=i, column=1, sticky="w", padx=(5, 10), pady=2)
+                
+                # 创建进度条
+                self.progress_vars[defect_id] = tk.DoubleVar(value=0)
+                progress = ttk.Progressbar(defect_content, variable=self.progress_vars[defect_id], length=150, mode="determinate", maximum=100)
+                progress.grid(row=i, column=2, sticky="w", pady=2)
+                self.ui_elements[f"-{defect_id.upper()}-PROGRESS-"] = progress
+        else:
+            # 如果没有定义类别，使用默认的"瑕疵"
+            defect_id = "defect"
+            defect_name = "瑕疵"
+            
+            # 创建缺陷类型标签
+            Label(defect_content, text=f"{defect_name}:", font=("微软雅黑", 10), bg="#333333", fg="white").grid(row=0, column=0, sticky="w", pady=4)
+            
+            # 创建计数标签
+            self.ui_elements[f"-{defect_id.upper()}-COUNT-"] = Label(defect_content, text="0", font=("微软雅黑", 10), bg="#333333", fg="white", width=5)
+            self.ui_elements[f"-{defect_id.upper()}-COUNT-"].grid(row=0, column=1, sticky="w", padx=(5, 10), pady=4)
+            
+            # 创建进度条
+            self.progress_vars[defect_id] = tk.DoubleVar(value=0)
+            progress = ttk.Progressbar(defect_content, variable=self.progress_vars[defect_id], length=150, mode="determinate", maximum=100)
+            progress.grid(row=0, column=2, sticky="w", pady=4)
+            self.ui_elements[f"-{defect_id.upper()}-PROGRESS-"] = progress
+    
         
         # 3. 最近检测框架
         recent_frame = Frame(right_frame, bg="#333333", padx=8, pady=8, relief=tk.GROOVE, bd=2)
@@ -332,7 +368,15 @@ class DefectDisplay:
         self.stats["total_inspections"] += 1
         if detection_results and len(detection_results) > 0:
             self.stats["defect_count"] += 1
-            self.stats["defect_types"]["defect"] += len(detection_results)
+            
+            # 根据类别更新缺陷类型统计
+            for det in detection_results:
+                if len(det) >= 6:  # 确保有类别ID
+                    class_id = int(det[5])
+                    if 0 <= class_id < len(self.class_names):
+                        class_name = self.class_names[class_id]
+                        self.stats["defect_types"][class_name] = self.stats["defect_types"].get(class_name, 0) + 1
+        
         self.stats["last_detection_time"] = time.time()
         
         # 将实际的UI更新放入队列
@@ -403,7 +447,7 @@ class DefectDisplay:
         else:
             result_text = "合格产品"
             self.ui_elements["-LAST-DETECTION-RESULT-"].config(text=result_text, fg="green")
-        
+            
         # 详情文本
         if has_defect:
             self.ui_elements["-DETECTION-DETAILS-"].insert(tk.END, f"检测时间: {time_str}\n")
@@ -414,7 +458,12 @@ class DefectDisplay:
                 if len(det) >= 6:  # x1,y1,x2,y2,conf,class
                     conf = det[4]
                     cls_id = int(det[5])
-                    cls_name = "瑕疵" if cls_id == 0 else f"类型{cls_id}"
+                    # 使用类别名称列表获取名称
+                    if 0 <= cls_id < len(self.class_names):
+                        cls_name = self.class_names[cls_id]
+                    else:
+                        cls_name = f"类型{cls_id}"
+                        
                     self.ui_elements["-DETECTION-DETAILS-"].insert(
                         tk.END, f"[{i+1}] {cls_name}: 置信度 {conf:.2f}\n"
                     )
@@ -425,6 +474,11 @@ class DefectDisplay:
         # 禁用编辑
         self.ui_elements["-DETECTION-DETAILS-"].config(state=tk.DISABLED)
     
+    def toggle_fullscreen(self):
+        """切换全屏/窗口模式"""
+        is_fullscreen = self.root.attributes("-fullscreen")
+        self.root.attributes("-fullscreen", not is_fullscreen)
+
     def _update_info(self):
         """更新界面上的统计信息（在主线程中调用）"""
         # 更新运行时长
@@ -444,15 +498,32 @@ class DefectDisplay:
             defect_rate = self.stats["defect_count"] / self.stats["total_inspections"] * 100
             self.ui_elements["-DEFECT-RATE-"].config(text=f"{defect_rate:.1f}%")
         
-        # 更新缺陷类型统计
-        # 这里只处理一种缺陷类型
-        defect_count = self.stats["defect_types"].get("defect", 0)
-        self.ui_elements["-DEFECT-COUNT-"].config(text=str(defect_count))
-        
-        # 更新进度条
-        if self.stats["total_inspections"] > 0:
-            defect_ratio = min(100, defect_count / max(1, self.stats["total_inspections"]) * 100)
-            self.progress_vars["defect"].set(defect_ratio)
+        # 更新各类缺陷统计
+        if self.class_names:
+            total = max(1, self.stats["total_inspections"])  # 避免除以零
+            
+            for i, class_name in enumerate(self.class_names):
+                defect_id = f"defect_{i}"
+                count = self.stats["defect_types"].get(class_name, 0)
+                
+                # 更新计数
+                if f"-{defect_id.upper()}-COUNT-" in self.ui_elements:
+                    self.ui_elements[f"-{defect_id.upper()}-COUNT-"].config(text=str(count))
+                
+                # 更新进度条
+                if defect_id in self.progress_vars:
+                    ratio = min(100, count / total * 100)
+                    self.progress_vars[defect_id].set(ratio)
+        else:
+            # 如果没有类别名称，使用默认的"defect"
+            defect_count = sum(self.stats["defect_types"].values())
+            if "-DEFECT-COUNT-" in self.ui_elements:
+                self.ui_elements["-DEFECT-COUNT-"].config(text=str(defect_count))
+            
+            # 更新进度条
+            if "defect" in self.progress_vars and self.stats["total_inspections"] > 0:
+                defect_ratio = min(100, defect_count / self.stats["total_inspections"] * 100)
+                self.progress_vars["defect"].set(defect_ratio)
     
     def run(self, update_interval: float = 0.1):
         """

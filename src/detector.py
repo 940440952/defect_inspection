@@ -180,59 +180,28 @@ class YOLODetector:
 
     def draw_detections(self, image: np.ndarray, detections: List[List[float]]) -> np.ndarray:
         """
-        Draw detection bounding boxes on image
+        在图像上绘制多个检测框
         
         Args:
-            image: Input image
-            detections: List of detections [x1, y1, x2, y2, conf, class_id]
+            image: 输入图像
+            detections: 检测结果列表 [x1, y1, x2, y2, conf, class_id]
             
         Returns:
-            Image with drawn detections
+            带有检测框的图像
         """
         img = image.copy()
-        
-        # 缺陷标记使用红色
-        defect_color = (0, 0, 255)  # 红色用于标记缺陷区域
-        
         for det in detections:
-            x1, y1, x2, y2, conf, class_id = det
-            
-            # Convert to int
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-            
-            # 计算缺陷区域（仅标记估计的缺陷区域而不是整个物体）
-            box_width = x2 - x1
-            box_height = y2 - y1
-            
-            # 假设缺陷通常位于检测框的中心区域，仅标记中心部分
-            # 可以根据实际情况调整这个比例
-            center_ratio = 0.6  # 中心区域占整个框的比例
-            
-            defect_x1 = int(x1 + (box_width * (1 - center_ratio) / 2))
-            defect_y1 = int(y1 + (box_height * (1 - center_ratio) / 2))
-            defect_x2 = int(x2 - (box_width * (1 - center_ratio) / 2))
-            defect_y2 = int(y2 - (box_height * (1 - center_ratio) / 2))
-            
-            # 标记精确的缺陷区域
-            cv2.rectangle(img, (defect_x1, defect_y1), (defect_x2, defect_y2), defect_color, 2)
-            
-            # 绘制缺陷标签
-            label = f"缺陷 {conf:.2f}"
-            (label_w, label_h), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            cv2.rectangle(img, (defect_x1, defect_y1 - label_h - 5), (defect_x1 + label_w, defect_y1), defect_color, -1)
-            cv2.putText(img, label, (defect_x1, defect_y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-        
+            img = self.draw_detection(img, det)
         return img
 
-    def draw_detection(self, image: np.ndarray, detection: List[float], color=(0, 0, 255)) -> np.ndarray:
+    def draw_detection(self, image: np.ndarray, detection: List[float]) -> np.ndarray:
         """
-        在图像上绘制单个检测框
+        在图像上绘制单个检测框，支持中文标签
         
         Args:
             image: 输入图像
             detection: [x1, y1, x2, y2, conf, class_id]格式的检测结果
-            color: BGR颜色元组
-        
+            
         Returns:
             带有检测框的图像
         """
@@ -244,75 +213,238 @@ class YOLODetector:
         conf = float(detection[4])
         class_id = int(detection[5])
         
+        # 为不同类型定义颜色 (BGR格式)
+        colors = [
+            (0, 0, 255),     # 红色 - 小划痕
+            (0, 127, 255),   # 橙色 - 小污点
+            (0, 255, 0),     # 绿色 - 大划痕
+            (255, 0, 0),     # 蓝色 - 大污点
+            (255, 0, 255),   # 紫色 - 堵孔
+            (255, 255, 0),   # 青色 - 其他类型
+        ]
+        
+        # 选择颜色 (防止索引越界)
+        color = colors[class_id % len(colors)]
+        
         # 绘制矩形框
         cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
         
-        # 添加类别标签和置信度
-        class_name = self.class_names[class_id] if class_id < len(self.class_names) else f"类别{class_id}"
-        label = f"{class_name}: {conf:.2f}"
-        
-        # 获取标签文本大小
-        (text_width, text_height), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-        
-        # 绘制标签背景
-        cv2.rectangle(img, (x1, y1 - text_height - 5), (x1 + text_width + 5, y1), color, -1)
-        
-        # 绘制标签文本
-        cv2.putText(img, label, (x1 + 3, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-        
+        # 使用PIL绘制中文文本
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+            import numpy as np
+            
+            # 获取类别名称
+            class_name = self.class_names[class_id] if class_id < len(self.class_names) else f"类别{class_id}"
+            label = f"{class_name}: {conf:.2f}"
+            
+            # 转换为PIL图像
+            pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            draw = ImageDraw.Draw(pil_img)
+            
+            # 尝试加载中文字体
+            font_paths = [
+                "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",  # Ubuntu
+                "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",             # 文泉驿微米黑
+                "/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc",                 # 文泉驿正黑
+                "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",              # Noto Sans CJK
+                "C:/Windows/Fonts/simhei.ttf",                                # Windows 黑体
+                "C:/Windows/Fonts/simfang.ttf",                               # Windows 仿宋
+            ]
+            
+            # 尝试加载字体，如果都失败则使用默认
+            font = None
+            for font_path in font_paths:
+                if os.path.exists(font_path):
+                    try:
+                        font = ImageFont.truetype(font_path, 20)
+                        break
+                    except Exception:
+                        continue
+                        
+            if font is None:
+                font = ImageFont.load_default()
+                
+            # 测量文本尺寸
+            try:
+                # 在新版PIL中使用textbbox
+                bbox = draw.textbbox((0, 0), label, font=font)
+                text_width = bbox[2] - bbox[0]
+                text_height = bbox[3] - bbox[1]
+            except AttributeError:
+                # 在旧版PIL中使用textsize
+                text_width, text_height = draw.textsize(label, font=font)
+            
+            # 绘制文本背景
+            if y1 - text_height - 5 > 0:
+                # 文本放在框上方
+                rect_y1 = y1 - text_height - 5
+                rect_y2 = y1
+                text_y = rect_y1
+            else:
+                # 文本放在框内上方
+                rect_y1 = y1
+                rect_y2 = y1 + text_height + 5
+                text_y = rect_y1
+                
+            # 绘制背景矩形（使用OpenCV，因为PIL的矩形绘制没有透明度选项）
+            cv2.rectangle(img, (x1, rect_y1), (x1 + text_width + 10, rect_y2), color, -1)
+            
+            # 将更新后的图像转换回PIL
+            pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+            draw = ImageDraw.Draw(pil_img)
+            
+            # 绘制文本
+            draw.text((x1 + 5, text_y + 1), label, font=font, fill=(255, 255, 255))
+            
+            # 转换回OpenCV图像
+            img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+            
+        except ImportError:
+            # 如果没有PIL，回退到OpenCV的英文绘制
+            logger.warning("未找到PIL库，中文标签可能无法正常显示")
+            class_name = f"ID:{class_id}"  # 使用ID代替中文名
+            label = f"{class_name}: {conf:.2f}"
+            
+            # 获取文本尺寸
+            (text_width, text_height), _ = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2
+            )
+            
+            # 绘制背景矩形
+            cv2.rectangle(
+                img, (x1, y1 - text_height - 5), 
+                (x1 + text_width + 5, y1), color, -1
+            )
+            
+            # 绘制文本
+            cv2.putText(
+                img, label, (x1 + 3, y1 - 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2
+            )
+            
         return img
 
 # For testing
-# if __name__ == "__main__":
-#     # Configure logging
-#     logging.basicConfig(
-#         level=logging.DEBUG,
-#         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-#     )
+if __name__ == "__main__":
+    import cv2
+    import logging
+    import os
+    from pathlib import Path
     
-#     try:
-#         # Initialize detector with YOLOv11n model
-#         # Options include: yolov11n, yolov11s, yolov11m, yolov11l
-#         detector = YOLODetector(
-#             model_name="yolo11l", 
-#             conf_thresh=0.25
-#         )
+    # 配置日志
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # 测试参数 - 硬编码，无需命令行参数
+    test_image_path = "/home/gtm/defect_inspection/image/00a9ab84-image_1746153465.jpg"  # 测试图像路径
+    models_dir = "/home/gtm/defect_inspection/models/detector"  # 模型目录
+    model_name = "detector"  # 模型名称
+    min_area = 100  # 最小面积阈值
+    confidence_threshold = 0.25  # 置信度阈值
+    class_names = ["小划痕", "小污点", "大划痕", "大污点", "堵孔"]  # 类别名称
+    output_dir = "/home/gtm/defect_inspection/test_results"  # 输出目录
+    
+    # 创建输出目录
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 检查测试图像是否存在，不存在则创建一个简单的测试图像
+    if not os.path.exists(test_image_path):
+        print(f"测试图像 {test_image_path} 不存在，创建一个简单的测试图像")
+        test_img = np.ones((640, 640, 3), dtype=np.uint8) * 255  # 白色背景
+        cv2.rectangle(test_img, (100, 100), (300, 300), (0, 0, 255), 2)  # 红色矩形
+        cv2.rectangle(test_img, (350, 350), (400, 400), (255, 0, 0), 2)  # 蓝色矩形
+        cv2.imwrite(test_image_path, test_img)
+    
+    try:
+        print(f"开始测试 YOLODetector...")
+        print(f"测试参数: 模型名称={model_name}, 模型目录={models_dir}")
+        print(f"过滤参数: 最小面积={min_area}, 置信度阈值={confidence_threshold}")
         
-#         # Test with local image if available
-#         test_img_path = "../data/images/bus.jpg"
-#         if not os.path.exists(test_img_path):
-#             logger.warning(f"Test image not found: {test_img_path}")
-#             # Try to find another image
-#             for img_ext in ['.jpg', '.jpeg', '.png', '.bmp']:
-#                 found_imgs = [f for f in os.listdir('.') if f.lower().endswith(img_ext)]
-#                 if found_imgs:
-#                     test_img_path = found_imgs[0]
-#                     logger.info(f"Using alternative test image: {test_img_path}")
-#                     break
-#             else:
-#                 logger.error("No test images found")
-#                 exit(1)
+        # 初始化检测器
+        detector = YOLODetector(
+            model_name=model_name,
+            models_dir=models_dir,
+            filter_enabled=True,
+            min_area=min_area,
+            confidence_threshold=confidence_threshold
+        )
         
-#         # Load and process image
-#         img = cv2.imread(test_img_path)
-#         logger.info(f"Loaded image with shape: {img.shape}")
+        # 设置类别名称
+        detector.class_names = class_names
+        print(f"设置类别名称: {class_names}")
         
-#         # Perform detection
-#         start_time = time.time()
-#         detections = detector.detect(img)
-#         elapsed = (time.time() - start_time) * 1000
+        # 加载测试图像
+        print(f"加载测试图像: {test_image_path}")
+        image = cv2.imread(test_image_path)
+        if image is None:
+            print(f"无法加载测试图像: {test_image_path}")
+            exit(1)
         
-#         # Log results
-#         logger.info(f"Detection completed in {elapsed:.2f}ms")
-#         logger.info(f"Found {len(detections)} objects")
+        # 转换为RGB (YOLO使用RGB格式)
+        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
-#         # Draw detections
-#         result_img = detector.draw_detections(img, detections)
+        # 打印图像信息
+        height, width, channels = image.shape
+        print(f"图像尺寸: {width} x {height} x {channels}")
         
-#         # Save and display result
-#         output_path = "detection_result.jpg"
-#         cv2.imwrite(output_path, result_img)
-#         logger.info(f"Result saved to {output_path}")
+        print("----------- 测试未过滤检测 -----------")
+        # 执行检测 - 不过滤
+        detections_no_filter = detector.detect(image_rgb, apply_filter=False)
+        print(f"检测到 {len(detections_no_filter)} 个结果 (未过滤)")
         
-#     except Exception as e:
-#         logger.exception(f"Error during test: {e}")
+        # 打印未过滤检测结果
+        for i, det in enumerate(detections_no_filter):
+            x1, y1, x2, y2, conf, cls_id = det
+            cls_id_int = int(cls_id)
+            class_name = detector.class_names[cls_id_int] if cls_id_int < len(detector.class_names) else f"类别{cls_id_int}"
+            area = (x2 - x1) * (y2 - y1)
+            print(f"[{i+1}] 类别: {class_name}, 置信度: {conf:.2f}, 面积: {area:.1f}像素, 坐标: {x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}")
+        
+        print("\n----------- 测试过滤检测 -----------")
+        # 执行检测 - 应用过滤
+        detections_filtered = detector.detect(image_rgb, apply_filter=True)
+        print(f"检测到 {len(detections_filtered)} 个结果 (已过滤)")
+        
+        # 打印已过滤检测结果
+        for i, det in enumerate(detections_filtered):
+            x1, y1, x2, y2, conf, cls_id = det
+            cls_id_int = int(cls_id)
+            class_name = detector.class_names[cls_id_int] if cls_id_int < len(detector.class_names) else f"类别{cls_id_int}"
+            area = (x2 - x1) * (y2 - y1)
+            print(f"[{i+1}] 类别: {class_name}, 置信度: {conf:.2f}, 面积: {area:.1f}像素, 坐标: {x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}")
+        
+        print("\n----------- 生成测试结果图像 -----------")
+        # 绘制未过滤的检测结果
+        result_no_filter = image.copy()
+        for det in detections_no_filter:
+            result_no_filter = detector.draw_detection(result_no_filter, det)
+        
+        # 绘制已过滤的检测结果
+        result_filtered = image.copy()
+        for det in detections_filtered:
+            result_filtered = detector.draw_detection(result_filtered, det)
+        
+        # 保存结果图像
+        no_filter_path = os.path.join(output_dir, "result_no_filter.jpg")
+        filtered_path = os.path.join(output_dir, "result_filtered.jpg")
+        cv2.imwrite(no_filter_path, result_no_filter)
+        cv2.imwrite(filtered_path, result_filtered)
+        
+        print(f"未过滤结果图像已保存: {no_filter_path}")
+        print(f"已过滤结果图像已保存: {filtered_path}")
+        
+        # 打印测试结果摘要
+        print("\n----------- 测试结果摘要 -----------")
+        print(f"总检测结果数: {len(detections_no_filter)}")
+        print(f"过滤后剩余结果数: {len(detections_filtered)}")
+        print(f"过滤掉的结果数: {len(detections_no_filter) - len(detections_filtered)}")
+        
+        print("\n测试成功完成！")
+        
+    except Exception as e:
+        import traceback
+        print(f"测试过程中发生错误:")
+        traceback.print_exc()

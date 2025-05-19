@@ -90,7 +90,7 @@ def setup_signal_handlers():
 def initialize_system(config: Dict[str, Any], args):
     """初始化系统各组件"""
     global io_controller, camera, detector, api_client, display, stats, logger, cropper
-    
+
     logger.info("正在初始化系统组件...")
     stats["system_start_time"] = datetime.now()
     
@@ -198,15 +198,23 @@ def initialize_system(config: Dict[str, Any], args):
         api_client = None
     
     # 6. 初始化显示界面(可选)
-    if not args.no_display and config.get("display", {}).get("enabled", True):
-        try:
+    try:
+        if config.get("display", {}).get("enabled", True) and not args.no_display:
             display_config = config.get("display", {})
-            display = DefectDisplay(display_config.get("window_name", "瑕疵检测系统"))
+            # 从detector配置中获取类别名称
+            class_names = detector.class_names if detector else []
+            
+            display = DefectDisplay(
+                window_title=display_config.get("window_name", "瑕疵检测系统"),
+                class_names=class_names  # 传递类别名称到显示界面
+            )
             logger.info("显示界面初始化成功")
-        except Exception as e:
-            logger.error(f"显示界面初始化失败: {str(e)}")
-            # 显示界面失败不阻止系统运行
+        else:
             display = None
+            logger.info("显示界面已禁用")
+    except Exception as e:
+        logger.error(f"显示界面初始化失败: {str(e)}")
+        return False
     
     # 7. 测试流水线(可选)
     if args.test_pipeline:
@@ -369,7 +377,7 @@ def process_product(stop_conveyor=True):
                 
                 # 对裁剪图像进行检测
                 detections = detector.detect(crop_img)
-       
+
                 # 保存原始检测结果
                 crop_detections.append(detections)  
                 
@@ -397,8 +405,15 @@ def process_product(stop_conveyor=True):
             stats["defects_detected"] += 1
             logger.info(f"检测到{len(all_detections)}个瑕疵")
             
-            # 更新缺陷统计 - 简化为只计数总数
-            stats["defect_types"]["defect"] += len(all_detections)
+            # 更新缺陷统计 - 按照类别分别计数
+            for det in all_detections:
+                class_id = int(det[5])
+                if class_id < len(detector.class_names):
+                    class_name = detector.class_names[class_id]
+                    stats["defect_types"][class_name] = stats["defect_types"].get(class_name, 0) + 1
+                else:
+                    logger.warning(f"未知类别ID: {class_id}")
+                    
             update_ui("set_status", f"检测到{len(all_detections)}个瑕疵", False)
         else:
             logger.info("未检测到瑕疵")
@@ -418,7 +433,8 @@ def process_product(stop_conveyor=True):
                 image, 
                 cropped_results, 
                 detection_dict,
-                class_names=detector.class_names
+                class_names=detector.class_names,
+                show_labels=False
             )
         else:
             # 否则使用原有绘制函数
