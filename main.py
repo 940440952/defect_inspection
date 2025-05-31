@@ -53,7 +53,6 @@ args = None
 ui_message_queue = queue.Queue()
 
 # 线程对象
-capture_thread = None
 processing_thread = None
 ejection_thread = None
 
@@ -97,18 +96,16 @@ def initialize_system(config: Dict[str, Any], args):
     try:
         io_config = config.get("io_controller", {})
         io_controller = PipelineController(
-            position_sensor_pin=io_config.get("position_sensor_pin", 7),
+            photo_sensor_pin=io_config.get("photo_sensor_pin", 7),
             conveyor_pin=io_config.get("conveyor_pin", 29),
             rejector_pin=io_config.get("rejector_pin", 31),
-            position_register=io_config.get("position_register", "0x02448030 w 0x040"),
+            ejection_sensor_pin=io_config.get("ejection_sensor_pin",32),
+            photo_sensor_register=io_config.get("position_register", "0x02448030 w 0x040"),
             conveyor_register=io_config.get("conveyor_register", "0x02430068 w 0x004"),
-            rejector_register=io_config.get("rejector_register", "0x02430070 w 0x004")
+            rejector_register=io_config.get("rejector_register", "0x02430070 w 0x004"),
+            ejection_sensor_register=config.get("ejection_sensor_register","0x02434080 w 0x040")
         )
         logger.info("IO控制器初始化成功")
-        
-        # 获取剔除传感器引脚配置
-        ejection_sensor_pin = io_config.get("ejection_sensor_pin", 11)  # 默认值
-        logger.info(f"剔除传感器引脚: {ejection_sensor_pin}")
         
     except Exception as e:
         logger.error(f"IO控制器初始化失败: {str(e)}")
@@ -239,15 +236,11 @@ def initialize_system(config: Dict[str, Any], args):
 
 def cleanup_system():
     """清理系统资源"""
-    global capture_thread, processing_thread, ejection_thread
+    global processing_thread, ejection_thread
     
     logger.info("正在清理系统资源...")
     
     # 停止所有线程
-    if capture_thread and capture_thread.is_alive():
-        logger.info("等待拍照线程结束...")
-        capture_thread.join(timeout=5.0)
-        
     if processing_thread and processing_thread.is_alive():
         logger.info("等待处理线程结束...")
         processing_thread.join(timeout=5.0)
@@ -258,11 +251,12 @@ def cleanup_system():
     
     # 显示系统运行统计
     if product_tracker:
-        stats = product_tracker.get_stats()
+        stats = product_tracker.stats  # 直接访问 stats 属性
         logger.info(f"系统运行统计:")
         logger.info(f"- 检测产品总数: {stats['total_products']}")
         logger.info(f"- 检测到的瑕疵产品数: {stats['defect_products']}")
         logger.info(f"- 已剔除产品数: {stats['ejected_products']}")
+        logger.info(f"- 已处理产品数: {stats['processed_products']}")
         if stats['total_products'] > 0:
             defect_rate = stats['defect_products']/max(1, stats['total_products'])*100
             logger.info(f"- 瑕疵率: {defect_rate:.1f}%")
@@ -364,141 +358,127 @@ def ejection_sensor_callback():
     except Exception as e:
         logger.error(f"剔除传感器回调执行出错: {str(e)}")
 
-
-def capture_thread_function():
-    """拍照线程函数"""
-    logger.info("拍照线程已启动")
-    
-    while running:
-        try:
-            # 线程保持运行，产品通过由传感器中断触发拍照
-            time.sleep(0.1)
-        except Exception as e:
-            logger.error(f"拍照线程异常: {str(e)}")
-            time.sleep(1)  # 出错后等待一段时间再继续
-    
-    logger.info("拍照线程已退出")
-
-
 def processing_thread_function():
     """处理线程函数 - 处理队列中的图像"""
     logger.info("处理线程已启动")
     
     while running:
         try:
-            # 等待新产品加入处理队列
+            # 等待新产品加入处理队列，使用事件通知机制
             if not product_tracker.wait_for_new_product(timeout=1.0):
+                # 超时继续循环，检查running状态
                 continue
                 
             # 获取待处理产品ID
-            product_id = product_tracker.get_next_product_for_processing()
-            if product_id is None:
-                continue
-                
-            # 获取产品信息
-            product = product_tracker.find_product_by_id(product_id)
-            if product is None or product.image is None:
-                logger.warning(f"找不到产品 {product_id} 或图像为空")
-                continue
-                
-            logger.info(f"开始处理产品 {product_id}")
-            update_ui("set_status", f"处理产品 {product_id}...", False)
-            
-            # 处理图像
-            image = product.image
-            
-            # 1. 首先进行裁剪检测
-            cropped_results = cropper.detect_and_crop(image)
-            
-            # 初始化检测结果变量
-            all_detections = []
-            crop_detections = []
-            has_defect = False
-            
-            # 2. 如果裁剪检测到缺陷区域
-            if cropped_results:
-                logger.info(f"产品 {product_id} 裁剪器检测到{len(cropped_results)}个潜在区域")
-                
-                # 对裁剪的区域进行详细检测
-                for crop_idx, crop_result in enumerate(cropped_results):
-                    crop_img = crop_result['crop']
-                    crop_box = crop_result['box']
+            while running:  # 处理队列中所有产品
+                product_id = product_tracker.get_next_product_for_processing()
+                if product_id is None:
+                    # 队列已清空，等待新的事件
+                    break
                     
-                    # 对裁剪图像进行检测
-                    detections = detector.detect(crop_img)
+                # 获取产品信息
+                product = product_tracker.find_product_by_id(product_id)
+                if product is None or product.image is None:
+                    logger.warning(f"找不到产品 {product_id} 或图像为空")
+                    continue
                     
-                    # 保存原始检测结果
-                    crop_detections.append(detections)
-                    
-                    # 如果有检测结果
-                    if detections:
-                        # 标记产品有缺陷
-                        has_defect = True
-                        
-                        # 调整检测坐标到原始图像坐标系
-                        for det in detections:
-                            # 原始检测格式: [x1, y1, x2, y2, conf, class_id]
-                            # 调整坐标: 加上裁剪区域的左上角坐标
-                            x1, y1 = det[0] + crop_box[0], det[1] + crop_box[1]
-                            x2, y2 = det[2] + crop_box[0], det[3] + crop_box[1]
-                            all_detections.append([x1, y1, x2, y2, det[4], det[5]])
-            
-            # 3. 更新产品检测结果
-            product_tracker.update_product_detection(
-                product_id, all_detections, has_defect, cropped_results
-            )
-            
-            # 4. 如果有显示界面，更新显示
-            if display:
-                # 整合检测结果用于显示
-                from src.display_utils import draw_combined_detections, merge_detection_results
+                logger.info(f"开始处理产品 {product_id}")
+                update_ui("set_status", f"处理产品 {product_id}...", False)
                 
-                # 如果有裁剪结果，使用增强版绘制
+                # 处理图像
+                image = product.image
+                
+                # 1. 首先进行裁剪检测
+                cropped_results = cropper.detect_and_crop(image)
+                
+                # 初始化检测结果变量
+                all_detections = []
+                crop_detections = []
+                has_defect = False
+                
+                # 2. 如果裁剪检测到缺陷区域
                 if cropped_results:
-                    # 将检测结果组织为字典
-                    detection_dict = merge_detection_results(cropped_results, crop_detections)
+                    logger.info(f"产品 {product_id} 裁剪器检测到{len(cropped_results)}个潜在区域")
                     
-                    # 使用增强版绘制函数
-                    display_img = draw_combined_detections(
-                        image, 
-                        cropped_results, 
-                        detection_dict,
-                        class_names=detector.class_names,
-                        show_labels=True
-                    )
-                else:
-                    # 否则使用原有绘制函数
-                    display_img = detector.draw_detections(image, all_detections)
+                    # 对裁剪的区域进行详细检测
+                    for crop_idx, crop_result in enumerate(cropped_results):
+                        crop_img = crop_result['crop']
+                        crop_box = crop_result['box']
+                        
+                        # 对裁剪图像进行检测
+                        detections = detector.detect(crop_img)
+                        
+                        # 保存原始检测结果
+                        crop_detections.append(detections)
+                        
+                        # 如果有检测结果
+                        if detections:
+                            # 标记产品有缺陷
+                            has_defect = True
+                            
+                            # 调整检测坐标到原始图像坐标系
+                            for det in detections:
+                                # 原始检测格式: [x1, y1, x2, y2, conf, class_id]
+                                # 调整坐标: 加上裁剪区域的左上角坐标
+                                x1, y1 = det[0] + crop_box[0], det[1] + crop_box[1]
+                                x2, y2 = det[2] + crop_box[0], det[3] + crop_box[1]
+                                all_detections.append([x1, y1, x2, y2, det[4], det[5]])
+                
+                # 3. 更新产品检测结果
+                product_tracker.update_product_detection(
+                    product_id, all_detections, has_defect, cropped_results
+                )
+                
+                # 4. 如果有显示界面，更新显示
+                if display:
+                    # 整合检测结果用于显示
+                    from src.display_utils import draw_combined_detections, merge_detection_results
                     
-                # 更新UI
-                update_ui("update_image", display_img, all_detections)
-            
-            # 5. 上传服务器 (如果配置了API客户端)
-            if api_client and api_client.api_url and api_client.api_token:
-                try:
-                    logger.info(f"上传产品 {product_id} 检测结果到服务器")
-                    update_ui("set_status", f"上传产品 {product_id} 结果...", False)
-                    
-                    # 直接传递图像和检测结果
-                    api_client.import_to_label_studio(
-                        image, 
-                        all_detections, 
-                        {"product_id": product_id}, 
-                        is_path=False
-                    )
-                    
-                    logger.info(f"产品 {product_id} 结果上传成功")
-                except Exception as e:
-                    logger.error(f"产品 {product_id} 结果上传失败: {str(e)}")
-            
-            logger.info(f"产品 {product_id} 处理完成")
+                    # 如果有裁剪结果，使用增强版绘制
+                    if cropped_results:
+                        # 将检测结果组织为字典
+                        detection_dict = merge_detection_results(cropped_results, crop_detections)
+                        
+                        # 使用增强版绘制函数
+                        display_img = draw_combined_detections(
+                            image, 
+                            cropped_results, 
+                            detection_dict,
+                            class_names=detector.class_names,
+                            show_labels=True
+                        )
+                    else:
+                        # 否则使用原有绘制函数
+                        display_img = detector.draw_detections(image, all_detections)
+                        
+                    # 更新UI
+                    update_ui("update_image", display_img, all_detections)
+                
+                # 5. 上传服务器 (如果配置了API客户端)
+                if api_client and api_client.api_url and api_client.api_token:
+                    try:
+                        logger.info(f"上传产品 {product_id} 检测结果到服务器")
+                        update_ui("set_status", f"上传产品 {product_id} 结果...", False)
+                        
+                        # 直接传递图像和检测结果
+                        api_client.import_to_label_studio(
+                            image, 
+                            all_detections, 
+                            {"product_id": product_id}, 
+                            is_path=False
+                        )
+                        
+                        logger.info(f"产品 {product_id} 结果上传成功")
+                    except Exception as e:
+                        logger.error(f"产品 {product_id} 结果上传失败: {str(e)}")
+                
+                logger.info(f"产品 {product_id} 处理完成")
             
         except Exception as e:
             logger.error(f"处理线程异常: {str(e)}")
             time.sleep(1)  # 出错后等待一段时间再继续
     
     logger.info("处理线程已退出")
-
 
 def process_ui_messages():
     """处理UI消息队列中的消息"""
@@ -525,7 +505,7 @@ def process_ui_messages():
 
 def main():
     """主函数"""
-    global running, display, logger, args, config, capture_thread, processing_thread, ejection_thread
+    global running, display, logger, args, config, processing_thread, ejection_thread
     
     # 解析命令行参数
     args = parse_args()
@@ -559,23 +539,10 @@ def main():
         logger.info("系统初始化完成，准备开始检测")
         
         # 注册传感器回调
-        io_controller.register_position_callback(photo_sensor_callback)
-        
-        # 创建剔除传感器回调的额外引脚设置
-        io_config = config.get("io_controller", {})
-        ejection_sensor_pin = io_config.get("ejection_sensor_pin", 11)  # 默认值
-        
-        # 设置剔除传感器引脚 (注意: 这里可能需要修改IO控制器类以支持多个传感器)
-        # 在此处简化为添加额外的回调函数，生产环境中需要修改IO控制器类
-        io_controller.setup_ejection_sensor(ejection_sensor_pin, ejection_sensor_callback)
-        
-        # 启动处理线程
-        capture_thread = threading.Thread(
-            target=capture_thread_function, 
-            name="CaptureThread", 
-            daemon=True
-        )
-        capture_thread.start()
+        io_controller.register_photo_callback(photo_sensor_callback)
+                
+        # 注册剔除传感器回调
+        io_controller.register_ejection_callback(ejection_sensor_callback)
         
         processing_thread = threading.Thread(
             target=processing_thread_function, 

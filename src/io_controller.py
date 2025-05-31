@@ -397,63 +397,75 @@ class PipelineController:
 
 
 # 测试代码
-if __name__ == "__main__":
-    # 配置日志
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+# if __name__ == "__main__":
+#     # 配置日志
+#     logging.basicConfig(
+#         level=logging.INFO,
+#         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+#     )
     
-    # 导入随机模块（移到顶部，避免在回调函数内部导入）
-    import random
+#     # 导入随机模块（移到顶部，避免在回调函数内部导入）
+#     import random
     
-    # 流水线控制器配置
-    pipeline = PipelineController(
-        photo_sensor_pin=7,      # 拍照传感器引脚
-        conveyor_pin=29,         # 传送带控制引脚
-        rejector_pin=31,         # 剔除执行器引脚
-        ejection_sensor_pin=32,  # 剔除传感器引脚
-        photo_sensor_register="0x02448030 w 0x040",  # 拍照传感器寄存器
-        conveyor_register="0x02430068 w 0x004",      # 传送带控制寄存器
-        rejector_register="0x02430070 w 0x004",      # 剔除执行器寄存器
-        ejection_sensor_register="0x02434080 w 0x040"  # 剔除传感器寄存器
-    )
+#     # 流水线控制器配置
+#     pipeline = PipelineController(
+#         photo_sensor_pin=7,      # 拍照传感器引脚
+#         conveyor_pin=29,         # 传送带控制引脚
+#         rejector_pin=31,         # 剔除执行器引脚
+#         ejection_sensor_pin=32,  # 剔除传感器引脚
+#         photo_sensor_register="0x02448030 w 0x040",  # 拍照传感器寄存器
+#         conveyor_register="0x02430068 w 0x004",      # 传送带控制寄存器
+#         rejector_register="0x02430070 w 0x004",      # 剔除执行器寄存器
+#         ejection_sensor_register="0x02434080 w 0x040"  # 剔除传感器寄存器
+#     )
     
-    logger.info("流水线控制器配置完成")
+#     logger.info("流水线控制器配置完成")
     
+    # 测试传送带和剔除装置
+    # pipeline.start_conveyor()
+    # time.sleep(10)
+    
+    # time.sleep(3)
+
+    # for i in range(3):
+    #     logger.info(f"激活剔除装置 ({i+1}/3)...")
+    #     result = pipeline.activate_rejector(0.5)
+    #     logger.info(f"剔除装置激活结果: {'成功' if result else '失败'}")
+    #     time.sleep(1.5)
+
     # 拍照传感器引脚测试
     # 测试计数
-    trigger_count = 0
+    # trigger_count = 0
     
-    # 定义回调函数
-    def sensor_callback():
-        global trigger_count
-        trigger_count += 1
-        logger.info(f"传感器触发次数: {trigger_count}")
+    # # 定义回调函数
+    # def sensor_callback():
+    #     global trigger_count
+    #     trigger_count += 1
+    #     logger.info(f"传感器触发次数: {trigger_count}")
     
-    # 注册回调
-    pipeline.register_ejection_callback(sensor_callback)
+    # # 注册回调
+    # pipeline.register_ejection_callback(sensor_callback)
     
-    # 测试持续时间(秒)
-    test_duration = 60
+    # # 测试持续时间(秒)
+    # test_duration = 60
     
-    logger.info(f"等待传感器触发，测试将持续 {test_duration} 秒...")
-    logger.info("请手动触发传感器或放置物体通过传感器位置")
+    # logger.info(f"等待传感器触发，测试将持续 {test_duration} 秒...")
+    # logger.info("请手动触发传感器或放置物体通过传感器位置")
     
-    # 记录开始时间
-    start_time = time.time()
+    # # 记录开始时间
+    # start_time = time.time()
     
-    try:
-        # 测试循环
-        while time.time() - start_time < test_duration:
-            # 每秒打印一次状态
-            if int(time.time() - start_time) % 2 == 0:
-                pin_state = GPIO.input(pipeline.photo_sensor_pin)
-                logger.debug(f"传感器当前状态: {'HIGH' if pin_state else 'LOW'}")
-            time.sleep(0.1)
+    # try:
+    #     # 测试循环
+    #     while time.time() - start_time < test_duration:
+    #         # 每秒打印一次状态
+    #         if int(time.time() - start_time) % 2 == 0:
+    #             pin_state = GPIO.input(pipeline.photo_sensor_pin)
+    #             logger.debug(f"传感器当前状态: {'HIGH' if pin_state else 'LOW'}")
+    #         time.sleep(0.1)
             
-        # 测试结束
-        logger.info(f"测试完成，传感器共触发 {trigger_count} 次")
+    #     # 测试结束
+    #     logger.info(f"测试完成，传感器共触发 {trigger_count} 次")
         
-    except Exception as e:
-        logger.error(f"测试过程中发生错误: {e}")
+    # except Exception as e:
+    #     logger.error(f"测试过程中发生错误: {e}")

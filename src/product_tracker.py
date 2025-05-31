@@ -18,7 +18,8 @@ class ProductInfo:
     
     def __init__(self, product_id: int):
         self.product_id = product_id  # 产品唯一ID
-        self.timestamp = datetime.now()  # 进入系统的时间戳
+        self.photo_timestamp = datetime.now()  # 进入系统的时间戳
+        self.ejection_timestamp = None # 通过剔除位置的时间戳
         self.image = None  # 产品图像
         self.detections = []  # 检测结果
         self.has_defect = False  # 是否有缺陷
@@ -215,6 +216,9 @@ class ProductTracker:
             product = self.product_queue.popleft()
             product_id = product.product_id
             
+            # 记录通过剔除位置的时间戳
+            product.ejection_timestamp = datetime.now()
+
             # 检查是否需要剔除
             if product_id in self.ejection_queue:
                 # 从剔除队列中移除
@@ -263,17 +267,41 @@ class ProductTracker:
     
     def get_next_product_for_processing(self) -> Optional[int]:
         """
-        从处理队列中获取下一个待处理产品ID
+        获取下一个要处理的产品ID
         
         Returns:
-            Optional[int]: 待处理产品ID，如果队列为空则返回None
+            Optional[int]: 产品ID，如果队列为空则返回None
         """
         try:
-            # 非阻塞获取
-            return self.processing_queue.get(block=False)
+            # 尝试获取一个产品ID
+            return self.processing_queue.get_nowait()
         except queue.Empty:
             return None
     
+    def get_multiple_products_for_processing(self, max_items: int = 10) -> List[int]:
+        """
+        获取多个要处理的产品ID
+        
+        Args:
+            max_items: 最多返回的产品ID数量
+            
+        Returns:
+            List[int]: 产品ID列表，如果队列为空则返回空列表
+        """
+        result = []
+        
+        try:
+            # 尝试获取指定数量的产品ID
+            for _ in range(max_items):
+                if self.processing_queue.empty():
+                    break
+                product_id = self.processing_queue.get_nowait()
+                result.append(product_id)
+                
+            return result
+        except queue.Empty:
+            return result
+
     def wait_for_new_product(self, timeout: float = None) -> bool:
         """
         等待新产品加入处理队列
@@ -322,3 +350,24 @@ class ProductTracker:
         # 触发所有事件，使等待的线程可以退出
         self.new_product_event.set()
         self.new_ejection_event.set()
+    
+    def get_transit_time(self, product_id: int) -> Optional[float]:
+        """
+        获取产品从拍照位置到剔除位置的传输时间（秒）
+        
+        Args:
+            product_id: 产品ID
+        
+        Returns:
+            Optional[float]: 传输时间（秒），如果产品尚未通过剔除位置则返回None
+        """
+        product = self.find_product_by_id(product_id)
+        if not product:
+            logger.error(f"无法找到产品 ID: {product_id}")
+            return None
+        
+        if product.ejection_timestamp and product.photo_timestamp:
+            transit_time = (product.ejection_timestamp - product.photo_timestamp).total_seconds()
+            return transit_time
+        
+        return None
