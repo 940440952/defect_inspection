@@ -164,7 +164,7 @@ def draw_combined_detections(
         # 只有启用标签显示时才绘制
         if show_labels:
             # 添加裁剪区域编号
-            label = f"区域 #{i+1}"
+            label = f"区域 {i+1}"
             # 使用PIL绘制中文标签
             result_image = draw_text_with_pil(
                 result_image,
@@ -215,7 +215,7 @@ def draw_combined_detections(
                 if show_confidence:
                     confidence_value = float(confidence)
                     confidence_str = f"{confidence_value:.2f}"
-                    label = f"{class_name}：{confidence_str}"
+                    label = f"{class_name}:{confidence_str}"
                 else:
                     label = class_name
                     

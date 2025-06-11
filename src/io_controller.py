@@ -421,17 +421,18 @@ class PipelineController:
     
 #     logger.info("流水线控制器配置完成")
     
-    # 测试传送带和剔除装置
-    # pipeline.start_conveyor()
-    # time.sleep(10)
-    
-    # time.sleep(3)
 
-    # for i in range(3):
-    #     logger.info(f"激活剔除装置 ({i+1}/3)...")
-    #     result = pipeline.activate_rejector(0.5)
-    #     logger.info(f"剔除装置激活结果: {'成功' if result else '失败'}")
-    #     time.sleep(1.5)
+#     # 测试传送带和剔除装置
+#     # pipeline.start_conveyor()
+#     # time.sleep(10)
+    
+#     # time.sleep(3)
+
+#     while True:
+#         logger.info(f"激活剔除装置 ..")
+#         result = pipeline.activate_rejector(0.5)
+#         logger.info(f"剔除装置激活结果: {'成功' if result else '失败'}")
+#         time.sleep(1.5)
 
     # 拍照传感器引脚测试
     # 测试计数

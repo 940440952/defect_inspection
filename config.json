@@ -28,9 +28,9 @@
         }
     },
     "api": {
-        "api_url": "http://192.168.1.7:8080",
+        "api_url": "http://192.168.1.7:8082",
         "auth_token": "ed1c8c53f2eb220ca6a324e5e166b99eea33251a",
-        "line_name": "test",
+        "line_name": "line_1",
         "product_type": "盖子",
         "timeout": 10,
         "max_retries": 3,
