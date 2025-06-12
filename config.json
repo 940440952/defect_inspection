@@ -18,19 +18,19 @@
 
     },
     "detector": {
-        "model_name": "detector",
-        "class_names": ["小划痕", "小污点", "大划痕", "大污点", "堵孔"],
+        "model_name": "detector_v4",
+        "class_names": ["堵孔", "大划痕", "大污点", "小划痕", "小污点"],
         "models_dir": "/home/gtm/defect_inspection/models/detector",
         "filter": {
-            "min_area": 300,
-            "confidence_threshold": 0.5,        
+            "min_area": 30,
+            "confidence_threshold": 0.1,        
             "enabled": true          
         }
     },
     "api": {
-        "api_url": "http://192.168.1.7:8082",
+        "api_url": "http://192.168.1.32:8082",
         "auth_token": "ed1c8c53f2eb220ca6a324e5e166b99eea33251a",
-        "line_name": "line_1",
+        "line_name": "test",
         "product_type": "盖子",
         "timeout": 10,
         "max_retries": 3,
@@ -50,7 +50,7 @@
         "duration": 0.5
     },
     "cropper": {
-        "cropper_model_name": "cropper",
+        "cropper_model_name": "cropper_v2",
         "cropper_confidence_threshold": 0.3,
         "models_dir": "/home/gtm/defect_inspection/models/cropper"
     },

@@ -215,19 +215,19 @@ class CameraManager:
             MvCamera.MV_CC_Finalize()
 
 # test
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
-    camera = CameraManager(device_index=0)
-    if camera.open_camera():
-        image, path = camera.capture_image(return_array=True, save_path="test_image.jpg")
-        # 查看image是什么类型的
-        if isinstance(image, np.ndarray):
-            print(f"Captured image type: {type(image)}")
-        else:
-            print(f"Captured image type: {type(image)}")
-        # 查看image的shape 
-        if image is not None:
-            print(f"Captured image shape: {image.shape}")
-        camera.close_camera()
-    else:
-        print("Failed to open camera")
+# if __name__ == "__main__":
+#     logging.basicConfig(level=logging.DEBUG)
+#     camera = CameraManager(device_index=0)
+#     if camera.open_camera():
+#         image, path = camera.capture_image(return_array=True, save_path="test_image.jpg")
+#         # 查看image是什么类型的
+#         if isinstance(image, np.ndarray):
+#             print(f"Captured image type: {type(image)}")
+#         else:
+#             print(f"Captured image type: {type(image)}")
+#         # 查看image的shape 
+#         if image is not None:
+#             print(f"Captured image shape: {image.shape}")
+#         camera.close_camera()
+#     else:
+#         print("Failed to open camera")

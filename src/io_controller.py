@@ -418,7 +418,8 @@ class PipelineController:
 #         rejector_register="0x02430070 w 0x004",      # 剔除执行器寄存器
 #         ejection_sensor_register="0x02434080 w 0x040"  # 剔除传感器寄存器
 #     )
-    
+
+            
 #     logger.info("流水线控制器配置完成")
     
 

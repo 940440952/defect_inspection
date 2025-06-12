@@ -39,15 +39,15 @@ def draw_text_with_pil(image, text, position, font_size=20, color=(255, 255, 255
     
     # 先尝试加载支持中文的字体
     chinese_font_paths = [
+        "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",              # Ubuntu Noto
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",     # 另一种 Noto 路径
+        "/usr/share/fonts/truetype/noto/NotoSansSC-Regular.otf",      # 思源黑体
         "/usr/share/fonts/wqy-microhei/wqy-microhei.ttc",             # 文泉驿微米黑
         "/usr/share/fonts/wqy-zenhei/wqy-zenhei.ttc",                 # 文泉驿正黑
-        "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",  # Ubuntu
-        "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",              # Noto Sans CJK
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",     # 另一种 Noto 路径
         "C:/Windows/Fonts/simhei.ttf",                                # Windows 黑体
-        "C:/Windows/Fonts/simfang.ttf",                               # Windows 仿宋
-        "/usr/share/fonts/truetype/arphic/uming.ttc",                 # AR PL UMing
-        "/usr/share/fonts/truetype/arphic/ukai.ttc",                  # AR PL UKai
+        "C:/Windows/Fonts/arial.ttf",                                 # Arial
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",            # DejaVu
+
     ]
     
     # 尝试加载中文字体
@@ -114,10 +114,9 @@ def draw_combined_detections(
     crop_results: List[Dict], 
     detection_results_dict: Dict[int, List],
     class_names: List[str] = None,
-    crop_color: Tuple[int, int, int] = (0, 255, 0),  # 裁剪框颜色(绿色)
-    defect_color: Tuple[int, int, int] = (0, 0, 255),  # 瑕疵框颜色(红色)
+    crop_color: Tuple[int, int, int] = (255, 255, 255),  # 裁剪框颜色(绿色)
     thickness: int = 2,
-    font_scale: float = 2,
+    font_scale: float = 1,
     show_confidence: bool = True,
     show_labels: bool = True
 ) -> np.ndarray:
@@ -169,7 +168,7 @@ def draw_combined_detections(
             result_image = draw_text_with_pil(
                 result_image,
                 label,
-                (x1 + 3, y1 - 15),
+                (x1 + 3, y1 - int(font_scale * 30)),
                 font_size=int(font_scale * 20),
                 color=(255, 255, 255),  # 白色文本
                 bg_color=None,
@@ -223,11 +222,11 @@ def draw_combined_detections(
                 result_image = draw_text_with_pil(
                     result_image,
                     label,
-                    (det_x1 + 3, det_y1 - 15),
+                    (det_x1 + 3, det_y1 - int(font_scale * 30)),
                     font_size=int(font_scale * 20),
                     color=(255, 255, 255),  # 白色文本
                     bg_color=None,
-                    stroke_width=2  # 添加描边，提高可读性
+                    stroke_width=1  # 添加描边，提高可读性
                 )
     
     # 3. 如果有未与裁剪区域关联的检测结果，直接绘制
@@ -255,7 +254,7 @@ def draw_combined_detections(
                 if show_confidence:
                     confidence_value = float(confidence)
                     confidence_str = f"{confidence_value:.2f}"
-                    label = f"{class_name}：{confidence_str}"
+                    label = f"{class_name}:{confidence_str}"
                 else:
                     label = class_name
                     
@@ -263,11 +262,11 @@ def draw_combined_detections(
                 result_image = draw_text_with_pil(
                     result_image,
                     label,
-                    (det_x1 + 3, det_y1 - 15),
+                    (det_x1 + 3, det_y1 -  int(font_scale * 30)),
                     font_size=int(font_scale * 20),
                     color=(255, 255, 255),  # 白色文本
                     bg_color=None,
-                    stroke_width=2  # 添加描边，提高可读性
+                    stroke_width=1  # 添加描边，提高可读性
                 )
     
     return result_image

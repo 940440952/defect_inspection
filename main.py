@@ -445,8 +445,8 @@ def processing_thread_function():
                             cropped_results, 
                             detection_dict,
                             class_names=detector.class_names,
-                            show_labels=False,
-                            show_confidence=False
+                            show_labels=True,
+                            show_confidence=True
                         )
                     else:
                         # 否则使用原有绘制函数

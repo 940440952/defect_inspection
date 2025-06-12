@@ -282,35 +282,35 @@ class ImageCropper:
             return None, []
 
 
-if __name__ == "__main__":
-    # 设置日志
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+# if __name__ == "__main__":
+#     # 设置日志
+#     logging.basicConfig(
+#         level=logging.DEBUG,
+#         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+#     )
     
-    # 初始化裁剪工具，使用YOLOv11模型
-    cropper = ImageCropper(
-        model_name="best", 
-        conf_threshold=0.25,
-        models_dir="models/cropper",
-        use_dla=False  # 在Jetson平台上可设为True
-    )
+#     # 初始化裁剪工具，使用YOLOv11模型
+#     cropper = ImageCropper(
+#         model_name="best", 
+#         conf_threshold=0.25,
+#         models_dir="models/cropper",
+#         use_dla=False  # 在Jetson平台上可设为True
+#     )
     
-    # 处理测试图像
-    test_img_path = "/home/gtm/defect_inspection/image/0a3a8c16-image_1745736852.jpg"
-    if os.path.exists(test_img_path):
-        original_image, cropped_results = cropper.process_image_file(test_img_path)
+#     # 处理测试图像
+#     test_img_path = "/home/gtm/defect_inspection/image/0a3a8c16-image_1745736852.jpg"
+#     if os.path.exists(test_img_path):
+#         original_image, cropped_results = cropper.process_image_file(test_img_path)
         
-        # 显示结果
-        if original_image is not None:
-            print(f"处理图像: {test_img_path}, 尺寸: {original_image.shape}")
-            print(f"检测到 {len(cropped_results)} 个缺陷区域")
+#         # 显示结果
+#         if original_image is not None:
+#             print(f"处理图像: {test_img_path}, 尺寸: {original_image.shape}")
+#             print(f"检测到 {len(cropped_results)} 个缺陷区域")
             
-            # 保存裁剪结果
-            for i, result in enumerate(cropped_results):
-                output_path = f"cropped_{i}.jpg"
-                cv2.imwrite(output_path, result['crop'])
-                print(f"裁剪结果 {i}: 位置 {result['box']}, 置信度: {result['conf']:.2f}, 类别: {result['class_id']}")
-    else:
-        print(f"测试图像 {test_img_path} 不存在")
+#             # 保存裁剪结果
+#             for i, result in enumerate(cropped_results):
+#                 output_path = f"cropped_{i}.jpg"
+#                 cv2.imwrite(output_path, result['crop'])
+#                 print(f"裁剪结果 {i}: 位置 {result['box']}, 置信度: {result['conf']:.2f}, 类别: {result['class_id']}")
+#     else:
+#         print(f"测试图像 {test_img_path} 不存在")

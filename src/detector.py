@@ -326,125 +326,125 @@ class YOLODetector:
         return img
 
 # For testing
-if __name__ == "__main__":
-    import cv2
-    import logging
-    import os
-    from pathlib import Path
+# if __name__ == "__main__":
+#     import cv2
+#     import logging
+#     import os
+#     from pathlib import Path
     
-    # 配置日志
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-    )
+#     # 配置日志
+#     logging.basicConfig(
+#         level=logging.INFO,
+#         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+#     )
     
-    # 测试参数 - 硬编码，无需命令行参数
-    test_image_path = "/home/gtm/defect_inspection/image/00a9ab84-image_1746153465.jpg"  # 测试图像路径
-    models_dir = "/home/gtm/defect_inspection/models/detector"  # 模型目录
-    model_name = "detector"  # 模型名称
-    min_area = 100  # 最小面积阈值
-    confidence_threshold = 0.25  # 置信度阈值
-    class_names = ["小划痕", "小污点", "大划痕", "大污点", "堵孔"]  # 类别名称
-    output_dir = "/home/gtm/defect_inspection/test_results"  # 输出目录
+#     # 测试参数 - 硬编码，无需命令行参数
+#     test_image_path = "/home/gtm/defect_inspection/image/00a9ab84-image_1746153465.jpg"  # 测试图像路径
+#     models_dir = "/home/gtm/defect_inspection/models/detector"  # 模型目录
+#     model_name = "detector"  # 模型名称
+#     min_area = 100  # 最小面积阈值
+#     confidence_threshold = 0.25  # 置信度阈值
+#     class_names = ["小划痕", "小污点", "大划痕", "大污点", "堵孔"]  # 类别名称
+#     output_dir = "/home/gtm/defect_inspection/test_results"  # 输出目录
     
-    # 创建输出目录
-    os.makedirs(output_dir, exist_ok=True)
+#     # 创建输出目录
+#     os.makedirs(output_dir, exist_ok=True)
     
-    # 检查测试图像是否存在，不存在则创建一个简单的测试图像
-    if not os.path.exists(test_image_path):
-        print(f"测试图像 {test_image_path} 不存在，创建一个简单的测试图像")
-        test_img = np.ones((640, 640, 3), dtype=np.uint8) * 255  # 白色背景
-        cv2.rectangle(test_img, (100, 100), (300, 300), (0, 0, 255), 2)  # 红色矩形
-        cv2.rectangle(test_img, (350, 350), (400, 400), (255, 0, 0), 2)  # 蓝色矩形
-        cv2.imwrite(test_image_path, test_img)
+#     # 检查测试图像是否存在，不存在则创建一个简单的测试图像
+#     if not os.path.exists(test_image_path):
+#         print(f"测试图像 {test_image_path} 不存在，创建一个简单的测试图像")
+#         test_img = np.ones((640, 640, 3), dtype=np.uint8) * 255  # 白色背景
+#         cv2.rectangle(test_img, (100, 100), (300, 300), (0, 0, 255), 2)  # 红色矩形
+#         cv2.rectangle(test_img, (350, 350), (400, 400), (255, 0, 0), 2)  # 蓝色矩形
+#         cv2.imwrite(test_image_path, test_img)
     
-    try:
-        print(f"开始测试 YOLODetector...")
-        print(f"测试参数: 模型名称={model_name}, 模型目录={models_dir}")
-        print(f"过滤参数: 最小面积={min_area}, 置信度阈值={confidence_threshold}")
+#     try:
+#         print(f"开始测试 YOLODetector...")
+#         print(f"测试参数: 模型名称={model_name}, 模型目录={models_dir}")
+#         print(f"过滤参数: 最小面积={min_area}, 置信度阈值={confidence_threshold}")
         
-        # 初始化检测器
-        detector = YOLODetector(
-            model_name=model_name,
-            models_dir=models_dir,
-            filter_enabled=True,
-            min_area=min_area,
-            confidence_threshold=confidence_threshold
-        )
+#         # 初始化检测器
+#         detector = YOLODetector(
+#             model_name=model_name,
+#             models_dir=models_dir,
+#             filter_enabled=True,
+#             min_area=min_area,
+#             confidence_threshold=confidence_threshold
+#         )
         
-        # 设置类别名称
-        detector.class_names = class_names
-        print(f"设置类别名称: {class_names}")
+#         # 设置类别名称
+#         detector.class_names = class_names
+#         print(f"设置类别名称: {class_names}")
         
-        # 加载测试图像
-        print(f"加载测试图像: {test_image_path}")
-        image = cv2.imread(test_image_path)
-        if image is None:
-            print(f"无法加载测试图像: {test_image_path}")
-            exit(1)
+#         # 加载测试图像
+#         print(f"加载测试图像: {test_image_path}")
+#         image = cv2.imread(test_image_path)
+#         if image is None:
+#             print(f"无法加载测试图像: {test_image_path}")
+#             exit(1)
         
-        # 转换为RGB (YOLO使用RGB格式)
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+#         # 转换为RGB (YOLO使用RGB格式)
+#         image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
-        # 打印图像信息
-        height, width, channels = image.shape
-        print(f"图像尺寸: {width} x {height} x {channels}")
+#         # 打印图像信息
+#         height, width, channels = image.shape
+#         print(f"图像尺寸: {width} x {height} x {channels}")
         
-        print("----------- 测试未过滤检测 -----------")
-        # 执行检测 - 不过滤
-        detections_no_filter = detector.detect(image_rgb, apply_filter=False)
-        print(f"检测到 {len(detections_no_filter)} 个结果 (未过滤)")
+#         print("----------- 测试未过滤检测 -----------")
+#         # 执行检测 - 不过滤
+#         detections_no_filter = detector.detect(image_rgb, apply_filter=False)
+#         print(f"检测到 {len(detections_no_filter)} 个结果 (未过滤)")
         
-        # 打印未过滤检测结果
-        for i, det in enumerate(detections_no_filter):
-            x1, y1, x2, y2, conf, cls_id = det
-            cls_id_int = int(cls_id)
-            class_name = detector.class_names[cls_id_int] if cls_id_int < len(detector.class_names) else f"类别{cls_id_int}"
-            area = (x2 - x1) * (y2 - y1)
-            print(f"[{i+1}] 类别: {class_name}, 置信度: {conf:.2f}, 面积: {area:.1f}像素, 坐标: {x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}")
+#         # 打印未过滤检测结果
+#         for i, det in enumerate(detections_no_filter):
+#             x1, y1, x2, y2, conf, cls_id = det
+#             cls_id_int = int(cls_id)
+#             class_name = detector.class_names[cls_id_int] if cls_id_int < len(detector.class_names) else f"类别{cls_id_int}"
+#             area = (x2 - x1) * (y2 - y1)
+#             print(f"[{i+1}] 类别: {class_name}, 置信度: {conf:.2f}, 面积: {area:.1f}像素, 坐标: {x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}")
         
-        print("\n----------- 测试过滤检测 -----------")
-        # 执行检测 - 应用过滤
-        detections_filtered = detector.detect(image_rgb, apply_filter=True)
-        print(f"检测到 {len(detections_filtered)} 个结果 (已过滤)")
+#         print("\n----------- 测试过滤检测 -----------")
+#         # 执行检测 - 应用过滤
+#         detections_filtered = detector.detect(image_rgb, apply_filter=True)
+#         print(f"检测到 {len(detections_filtered)} 个结果 (已过滤)")
         
-        # 打印已过滤检测结果
-        for i, det in enumerate(detections_filtered):
-            x1, y1, x2, y2, conf, cls_id = det
-            cls_id_int = int(cls_id)
-            class_name = detector.class_names[cls_id_int] if cls_id_int < len(detector.class_names) else f"类别{cls_id_int}"
-            area = (x2 - x1) * (y2 - y1)
-            print(f"[{i+1}] 类别: {class_name}, 置信度: {conf:.2f}, 面积: {area:.1f}像素, 坐标: {x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}")
+#         # 打印已过滤检测结果
+#         for i, det in enumerate(detections_filtered):
+#             x1, y1, x2, y2, conf, cls_id = det
+#             cls_id_int = int(cls_id)
+#             class_name = detector.class_names[cls_id_int] if cls_id_int < len(detector.class_names) else f"类别{cls_id_int}"
+#             area = (x2 - x1) * (y2 - y1)
+#             print(f"[{i+1}] 类别: {class_name}, 置信度: {conf:.2f}, 面积: {area:.1f}像素, 坐标: {x1:.1f},{y1:.1f},{x2:.1f},{y2:.1f}")
         
-        print("\n----------- 生成测试结果图像 -----------")
-        # 绘制未过滤的检测结果
-        result_no_filter = image.copy()
-        for det in detections_no_filter:
-            result_no_filter = detector.draw_detection(result_no_filter, det)
+#         print("\n----------- 生成测试结果图像 -----------")
+#         # 绘制未过滤的检测结果
+#         result_no_filter = image.copy()
+#         for det in detections_no_filter:
+#             result_no_filter = detector.draw_detection(result_no_filter, det)
         
-        # 绘制已过滤的检测结果
-        result_filtered = image.copy()
-        for det in detections_filtered:
-            result_filtered = detector.draw_detection(result_filtered, det)
+#         # 绘制已过滤的检测结果
+#         result_filtered = image.copy()
+#         for det in detections_filtered:
+#             result_filtered = detector.draw_detection(result_filtered, det)
         
-        # 保存结果图像
-        no_filter_path = os.path.join(output_dir, "result_no_filter.jpg")
-        filtered_path = os.path.join(output_dir, "result_filtered.jpg")
-        cv2.imwrite(no_filter_path, result_no_filter)
-        cv2.imwrite(filtered_path, result_filtered)
+#         # 保存结果图像
+#         no_filter_path = os.path.join(output_dir, "result_no_filter.jpg")
+#         filtered_path = os.path.join(output_dir, "result_filtered.jpg")
+#         cv2.imwrite(no_filter_path, result_no_filter)
+#         cv2.imwrite(filtered_path, result_filtered)
         
-        print(f"未过滤结果图像已保存: {no_filter_path}")
-        print(f"已过滤结果图像已保存: {filtered_path}")
+#         print(f"未过滤结果图像已保存: {no_filter_path}")
+#         print(f"已过滤结果图像已保存: {filtered_path}")
         
-        # 打印测试结果摘要
-        print("\n----------- 测试结果摘要 -----------")
-        print(f"总检测结果数: {len(detections_no_filter)}")
-        print(f"过滤后剩余结果数: {len(detections_filtered)}")
-        print(f"过滤掉的结果数: {len(detections_no_filter) - len(detections_filtered)}")
+#         # 打印测试结果摘要
+#         print("\n----------- 测试结果摘要 -----------")
+#         print(f"总检测结果数: {len(detections_no_filter)}")
+#         print(f"过滤后剩余结果数: {len(detections_filtered)}")
+#         print(f"过滤掉的结果数: {len(detections_no_filter) - len(detections_filtered)}")
         
-        print("\n测试成功完成！")
+#         print("\n测试成功完成！")
         
-    except Exception as e:
-        import traceback
-        print(f"测试过程中发生错误:")
-        traceback.print_exc()
+#     except Exception as e:
+#         import traceback
+#         print(f"测试过程中发生错误:")
+#         traceback.print_exc()
