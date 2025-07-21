@@ -196,12 +196,15 @@ def initialize_system(config: Dict[str, Any], args):
     try:
         if config.get("display", {}).get("enabled", True) and not args.no_display:
             display_config = config.get("display", {})
-            # 从detector配置中获取类别名称
+            resolution = tuple(display_config.get("resolution", [1920, 1080]))
+            fullscreen = display_config.get("fullscreen", False)
             class_names = detector.class_names if detector else []
             
             display = DefectDisplay(
                 window_title=display_config.get("window_name", "瑕疵检测系统"),
-                class_names=class_names  # 传递类别名称到显示界面
+                class_names=class_names,
+                resolution=resolution,
+                fullscreen=fullscreen
             )
             logger.info("显示界面初始化成功")
         else:

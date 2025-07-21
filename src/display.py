@@ -28,13 +28,16 @@ logger = logging.getLogger("DefectInspection.Display")
 class DefectDisplay:
     """瑕疵检测显示界面类"""
     
-    def __init__(self, window_title="瑕疵检测系统", class_names=None):
+    def __init__(self, window_title="瑕疵检测系统", class_names=None,resolution: Optional[Tuple[int, int]] = None,
+                 fullscreen: bool = False):
         """
         初始化显示界面
         
         Args:
             window_title: 窗口标题
             class_names: 缺陷类型名称列表
+            resolution: 分辨率，例如(1920, 1080)
+            fullscreen: 是否全屏显示
         """
         self.window_title = window_title
         self.root = None
@@ -46,6 +49,9 @@ class DefectDisplay:
         
         # 使用提供的类别名称或默认为空列表
         self.class_names = class_names if class_names else []
+
+        self.resolution = resolution
+        self.fullscreen = fullscreen
         
         # 初始化统计信息
         self.stats = {
@@ -82,11 +88,15 @@ class DefectDisplay:
         self.root = tk.Tk()
         self.root.title(self.window_title)
         
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        self.root.geometry(f"{screen_width}x{screen_height}+0+0")
+        if self.resolution and isinstance(self.resolution, (list, tuple)) and len(self.resolution) == 2:
+            width, height = self.resolution
+            self.root.geometry(f"{width}x{height}+0+0")
+        else:
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            self.root.geometry(f"{screen_width}x{screen_height}+0+0")
 
-        self.root.attributes("-fullscreen", True)
+        self.root.attributes("-fullscreen", self.fullscreen)
         self.root.bind("<Escape>", lambda event: self.toggle_fullscreen())
 
 
@@ -210,43 +220,43 @@ class DefectDisplay:
     
         
         # 3. 最近检测框架
-        recent_frame = Frame(right_frame, bg="#333333", padx=8, pady=8, relief=tk.GROOVE, bd=2)
-        recent_frame.pack(fill=tk.X, expand=True, pady=(0, 10))
+        # recent_frame = Frame(right_frame, bg="#333333", padx=8, pady=8, relief=tk.GROOVE, bd=2)
+        # recent_frame.pack(fill=tk.X, expand=True, pady=(0, 10))
         
-        Label(recent_frame, text="最近检测", font=("微软雅黑", 12, "bold"), bg="#333333", fg="white").pack(anchor="w", pady=(0, 5))
+        # Label(recent_frame, text="最近检测", font=("微软雅黑", 12, "bold"), bg="#333333", fg="white").pack(anchor="w", pady=(0, 5))
         
-        # 最近检测内容
-        recent_content = Frame(recent_frame, bg="#333333")
-        recent_content.pack(fill=tk.X, expand=True)
+        # # 最近检测内容
+        # recent_content = Frame(recent_frame, bg="#333333")
+        # recent_content.pack(fill=tk.X, expand=True)
         
-        # 时间
-        Label(recent_content, text="时间:", font=("微软雅黑", 10), bg="#333333", fg="white").grid(row=0, column=0, sticky="w", pady=2)
-        self.ui_elements["-LAST-DETECTION-TIME-"] = Label(recent_content, text="--", font=("微软雅黑", 10), bg="#333333", fg="white")
-        self.ui_elements["-LAST-DETECTION-TIME-"].grid(row=0, column=1, sticky="w", padx=(5, 0), pady=2)
+        # # 时间
+        # Label(recent_content, text="时间:", font=("微软雅黑", 10), bg="#333333", fg="white").grid(row=0, column=0, sticky="w", pady=2)
+        # self.ui_elements["-LAST-DETECTION-TIME-"] = Label(recent_content, text="--", font=("微软雅黑", 10), bg="#333333", fg="white")
+        # self.ui_elements["-LAST-DETECTION-TIME-"].grid(row=0, column=1, sticky="w", padx=(5, 0), pady=2)
         
-        # 结果
-        Label(recent_content, text="结果:", font=("微软雅黑", 10), bg="#333333", fg="white").grid(row=1, column=0, sticky="w", pady=2)
-        self.ui_elements["-LAST-DETECTION-RESULT-"] = Label(recent_content, text="--", font=("微软雅黑", 10), bg="#333333", fg="white")
-        self.ui_elements["-LAST-DETECTION-RESULT-"].grid(row=1, column=1, sticky="w", padx=(5, 0), pady=2)
+        # # 结果
+        # Label(recent_content, text="结果:", font=("微软雅黑", 10), bg="#333333", fg="white").grid(row=1, column=0, sticky="w", pady=2)
+        # self.ui_elements["-LAST-DETECTION-RESULT-"] = Label(recent_content, text="--", font=("微软雅黑", 10), bg="#333333", fg="white")
+        # self.ui_elements["-LAST-DETECTION-RESULT-"].grid(row=1, column=1, sticky="w", padx=(5, 0), pady=2)
         
-        # 详情
-        Label(recent_content, text="详情:", font=("微软雅黑", 10), bg="#333333", fg="white").grid(row=2, column=0, sticky="nw", pady=2)
+        # # 详情
+        # Label(recent_content, text="详情:", font=("微软雅黑", 10), bg="#333333", fg="white").grid(row=2, column=0, sticky="nw", pady=2)
         
-        # 文本框和滚动条
-        text_frame = Frame(recent_content, bg="#444444")
-        text_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(2, 5))
+        # # 文本框和滚动条
+        # text_frame = Frame(recent_content, bg="#444444")
+        # text_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(2, 5))
         
-        text_scroll = Scrollbar(text_frame)
-        text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        # text_scroll = Scrollbar(text_frame)
+        # text_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         
-        self.ui_elements["-DETECTION-DETAILS-"] = Text(text_frame, height=5, width=40, 
-                                                      font=("微软雅黑", 9), bg="#444444", fg="white",
-                                                      yscrollcommand=text_scroll.set)
-        self.ui_elements["-DETECTION-DETAILS-"].pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        text_scroll.config(command=self.ui_elements["-DETECTION-DETAILS-"].yview)
+        # self.ui_elements["-DETECTION-DETAILS-"] = Text(text_frame, height=5, width=40, 
+        #                                               font=("微软雅黑", 9), bg="#444444", fg="white",
+        #                                               yscrollcommand=text_scroll.set)
+        # self.ui_elements["-DETECTION-DETAILS-"].pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # text_scroll.config(command=self.ui_elements["-DETECTION-DETAILS-"].yview)
         
-        self.ui_elements["-DETECTION-DETAILS-"].insert(tk.END, "暂无检测记录")
-        self.ui_elements["-DETECTION-DETAILS-"].config(state=tk.DISABLED)
+        # self.ui_elements["-DETECTION-DETAILS-"].insert(tk.END, "暂无检测记录")
+        # self.ui_elements["-DETECTION-DETAILS-"].config(state=tk.DISABLED)
         
         # 4. 控制按钮
         button_frame = Frame(right_frame, bg="#222222", pady=10)

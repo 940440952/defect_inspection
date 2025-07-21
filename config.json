@@ -18,8 +18,8 @@
 
     },
     "detector": {
-        "model_name": "detector_v4",
-        "class_names": ["堵孔", "大划痕", "大污点", "小划痕", "小污点"],
+        "model_name": "detector_v6",
+        "class_names": ["堵孔", "外观缺陷","大划痕", "大污点", "小划痕", "小污点"],
         "models_dir": "/home/gtm/defect_inspection/models/detector",
         "filter": {
             "min_area": 700,
@@ -39,8 +39,8 @@
     "display": {
         "enabled": true,
         "window_name": "瑕疵检测系统",
-        "fullscreen": false,
-        "resolution": [1920, 1080],
+        "fullscreen": true,
+        "resolution": [1024, 600],
         "display_time": 2.0
     },
     "ejection": {
