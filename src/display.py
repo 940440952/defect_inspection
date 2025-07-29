@@ -29,7 +29,7 @@ class DefectDisplay:
     """瑕疵检测显示界面类"""
     
     def __init__(self, window_title="瑕疵检测系统", class_names=None,resolution: Optional[Tuple[int, int]] = None,
-                 fullscreen: bool = False):
+                 fullscreen: bool = False, io_controller=None):
         """
         初始化显示界面
         
@@ -46,7 +46,7 @@ class DefectDisplay:
         self.photo_image = None  # 保存Tkinter PhotoImage对象
         self.latest_results = []
         self._error_status = False  # 新增：错误状态标志
-        
+        self.io_controller = io_controller
         # 使用提供的类别名称或默认为空列表
         self.class_names = class_names if class_names else []
 
@@ -258,21 +258,9 @@ class DefectDisplay:
         # self.ui_elements["-DETECTION-DETAILS-"].insert(tk.END, "暂无检测记录")
         # self.ui_elements["-DETECTION-DETAILS-"].config(state=tk.DISABLED)
         
-        # 4. 控制按钮
+        # 4. 仅保留退出按钮
         button_frame = Frame(right_frame, bg="#222222", pady=10)
         button_frame.pack(fill=tk.X, expand=False)
-        
-        # 开始按钮
-        self.ui_elements["-START-"] = Button(button_frame, text="开始检测", font=("微软雅黑", 10),
-                                            bg="#007bff", fg="white", relief=tk.RAISED,
-                                            command=self.start)
-        self.ui_elements["-START-"].pack(side=tk.LEFT, padx=(0, 10))
-        
-        # 停止按钮
-        self.ui_elements["-STOP-"] = Button(button_frame, text="停止检测", font=("微软雅黑", 10),
-                                           bg="#dc3545", fg="white", relief=tk.RAISED,
-                                           command=self.stop, state=tk.DISABLED)
-        self.ui_elements["-STOP-"].pack(side=tk.LEFT, padx=(0, 10))
         
         # 退出按钮
         self.ui_elements["-EXIT-"] = Button(button_frame, text="退出", font=("微软雅黑", 10),
@@ -304,8 +292,8 @@ class DefectDisplay:
             except Exception as e:
                 logger.error(f"处理UI更新队列时出错: {e}")
             finally:
-                # 安排下一次处理
-                if self.root and self.running:
+                # 安排下一次处理 - 只要窗口存在就继续处理
+                if self.root:
                     self.root.after(50, process_ui_updates)
         
         # 启动第一次处理
@@ -318,23 +306,39 @@ class DefectDisplay:
     
     def start(self):
         """开始检测"""
-        self.running = True
-        self._queue_ui_update(self._update_buttons_state)
-        logger.info("检测流程启动")
-    
-    def _update_buttons_state(self):
-        """更新按钮状态 - 内部方法，只能在主线程调用"""
         if self.running:
-            self.ui_elements["-START-"].config(state=tk.DISABLED)
-            self.ui_elements["-STOP-"].config(state=tk.NORMAL)
-        else:
-            self.ui_elements["-START-"].config(state=tk.NORMAL)
-            self.ui_elements["-STOP-"].config(state=tk.DISABLED)
+            logger.warning("检测已在运行中，忽略重复启动请求")
+            return
+            
+        self.running = True
+        
+        # 启动传送带
+        if self.io_controller:
+            try:
+                self.io_controller.start_conveyor()
+                logger.info("传送带已启动")
+            except Exception as e:
+                logger.error(f"启动传送带失败: {e}")
+                self._queue_ui_update(self._set_status_internal, f"启动传送带失败: {e}", True)
+                return
+        
+        # 更新状态栏
+        self._queue_ui_update(self._set_status_internal, "检测进行中", False)
+        logger.info("检测流程启动")
     
     def stop(self):
         """停止检测"""
+        if not self.running:
+            logger.warning("检测已停止，忽略重复停止请求")
+            return
+            
         self.running = False
-        self._queue_ui_update(self._update_buttons_state)
+        
+        # 停止传送带
+        if self.io_controller:
+            self.io_controller.stop_conveyor()
+        
+        # 更新状态栏
         self._queue_ui_update(self._set_status_internal, "检测已停止", False)
         logger.info("检测流程停止")
     
@@ -368,12 +372,27 @@ class DefectDisplay:
             detection_results: 检测结果列表，每项为[x1, y1, x2, y2, conf, class_id]
         """
         if image is None:
+            logger.warning("update_image: 接收到空图像")
             return False
             
-        # 保存当前图像和检测结果，然后在主线程中处理
-        self.latest_image = image.copy() if hasattr(image, 'copy') else image
-        self.latest_results = detection_results
+        logger.debug(f"update_image: 接收到图像 {image.shape}, 检测结果数量: {len(detection_results) if detection_results else 0}")
         
+        # 确保图像是有效的
+        if not isinstance(image, np.ndarray) or image.size == 0:
+            logger.error("update_image: 无效的图像数据")
+            return False
+            
+        try:
+            # 创建图像的深拷贝
+            self.latest_image = image.copy()
+            self.latest_results = detection_results.copy() if detection_results else []
+            
+            # 强制触发UI更新
+            self._queue_ui_update(self._force_image_update)
+        except Exception as e:
+            logger.error(f"update_image: 处理图像时出错 - {e}")
+            return False
+            
         # 更新统计信息
         self.stats["total_inspections"] += 1
         if detection_results and len(detection_results) > 0:
@@ -392,13 +411,21 @@ class DefectDisplay:
         # 将实际的UI更新放入队列
         self._queue_ui_update(self._update_image_internal)
         self._queue_ui_update(self._update_info)
+        logger.debug("update_image: UI更新已加入队列")
         return True
     
     def _update_image_internal(self):
         """内部使用，实际执行图像更新（在主线程中调用）"""
-        if not self.root or self.latest_image is None:
+        if not self.root:
+            logger.warning("_update_image_internal: root窗口不存在")
             return
             
+        if self.latest_image is None:
+            logger.warning("_update_image_internal: latest_image为空")
+            return
+            
+        logger.debug(f"_update_image_internal: 开始更新图像，图像形状: {self.latest_image.shape}")
+        
         try:
             # 转换为PIL图像，然后转为Tkinter PhotoImage
             img_rgb = cv2.cvtColor(self.latest_image, cv2.COLOR_BGR2RGB)
@@ -408,12 +435,16 @@ class DefectDisplay:
             canvas_width = self.canvas.winfo_width()
             canvas_height = self.canvas.winfo_height()
             
+            logger.debug(f"_update_image_internal: 画布尺寸 {canvas_width}x{canvas_height}")
+            
             if canvas_width > 1 and canvas_height > 1:  # 确保画布有有效尺寸
                 # 计算图像缩放比例，保持纵横比
                 img_width, img_height = pil_img.size
                 scale = min(canvas_width/img_width, canvas_height/img_height)
                 new_width = int(img_width * scale)
                 new_height = int(img_height * scale)
+                
+                logger.debug(f"_update_image_internal: 缩放比例 {scale}, 新尺寸 {new_width}x{new_height}")
                 
                 # 缩放图像
                 if scale != 1:
@@ -429,60 +460,57 @@ class DefectDisplay:
                 image=self.photo_image, anchor=tk.CENTER
             )
             
+            logger.debug("_update_image_internal: 图像更新完成")
+            
             # 更新检测结果详情
             self._update_detection_details()
             
         except Exception as e:
             logger.error(f"更新图像时出错: {e}")
+            import traceback
+            logger.error(f"错误详情: {traceback.format_exc()}")
     
-    def _update_detection_details(self):
-        """更新检测结果详情（在主线程中调用）"""
-        if not self.latest_results:
+    def _force_image_update(self):
+        """强制更新图像显示（在主线程中调用）"""
+        if not self.root or self.latest_image is None:
             return
             
-        # 启用编辑
-        self.ui_elements["-DETECTION-DETAILS-"].config(state=tk.NORMAL)
-        self.ui_elements["-DETECTION-DETAILS-"].delete(1.0, tk.END)
-        
-        # 检测时间
-        detection_time = datetime.fromtimestamp(self.stats["last_detection_time"])
-        time_str = detection_time.strftime("%H:%M:%S")
-        self.ui_elements["-LAST-DETECTION-TIME-"].config(text=time_str)
-        
-        # 检测结果
-        has_defect = len(self.latest_results) > 0
-        if has_defect:
-            result_text = f"发现{len(self.latest_results)}个瑕疵"
-            self.ui_elements["-LAST-DETECTION-RESULT-"].config(text=result_text, fg="red")
-        else:
-            result_text = "合格产品"
-            self.ui_elements["-LAST-DETECTION-RESULT-"].config(text=result_text, fg="green")
+        logger.debug("强制图像更新")
+        try:
+            # 转换为PIL图像
+            img_rgb = cv2.cvtColor(self.latest_image, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(img_rgb)
             
-        # 详情文本
-        if has_defect:
-            self.ui_elements["-DETECTION-DETAILS-"].insert(tk.END, f"检测时间: {time_str}\n")
-            self.ui_elements["-DETECTION-DETAILS-"].insert(tk.END, f"检测结果: {result_text}\n\n")
+            # 获取画布尺寸
+            canvas_width = self.canvas.winfo_width()
+            canvas_height = self.canvas.winfo_height()
             
-            # 添加每个缺陷的详细信息
-            for i, det in enumerate(self.latest_results):
-                if len(det) >= 6:  # x1,y1,x2,y2,conf,class
-                    conf = det[4]
-                    cls_id = int(det[5])
-                    # 使用类别名称列表获取名称
-                    if 0 <= cls_id < len(self.class_names):
-                        cls_name = self.class_names[cls_id]
-                    else:
-                        cls_name = f"类型{cls_id}"
-                        
-                    self.ui_elements["-DETECTION-DETAILS-"].insert(
-                        tk.END, f"[{i+1}] {cls_name}: 置信度 {conf:.2f}\n"
-                    )
+            # 缩放图像以适应画布
+            if canvas_width > 1 and canvas_height > 1:
+                img_width, img_height = pil_img.size
+                scale = min(canvas_width/img_width, canvas_height/img_height)
+                new_width = int(img_width * scale)
+                new_height = int(img_height * scale)
+                pil_img = pil_img.resize((new_width, new_height), Image.LANCZOS)
+            
+            # 创建新的PhotoImage并更新显示
+            self.photo_image = ImageTk.PhotoImage(pil_img)
+            self.canvas.delete("all")
+            self.canvas.create_image(
+                canvas_width//2, canvas_height//2,
+                image=self.photo_image, anchor=tk.CENTER
+            )
+            logger.debug("强制图像更新完成")
+        except Exception as e:
+            logger.error(f"强制图像更新失败: {e}")
+
+    def _update_detection_details(self):
+        """更新检测结果详情（在主线程中调用）"""
+        # 由于检测详情UI元素被注释掉了，这里只记录日志
+        if self.latest_results:
+            logger.debug(f"检测结果更新: 发现{len(self.latest_results)}个瑕疵")
         else:
-            self.ui_elements["-DETECTION-DETAILS-"].insert(tk.END, f"检测时间: {time_str}\n")
-            self.ui_elements["-DETECTION-DETAILS-"].insert(tk.END, "检测结果: 未发现瑕疵\n")
-        
-        # 禁用编辑
-        self.ui_elements["-DETECTION-DETAILS-"].config(state=tk.DISABLED)
+            logger.debug("检测结果更新: 未发现瑕疵")
     
     def toggle_fullscreen(self):
         """切换全屏/窗口模式"""
@@ -551,7 +579,8 @@ class DefectDisplay:
             def update():
                 if self.running:
                     self._queue_ui_update(self._update_info)
-                    self.root.after(int(update_interval * 1000), update)
+                # 无论是否运行都要继续调度下一次更新
+                self.root.after(int(update_interval * 1000), update)
             
             # 启动定期更新
             update()

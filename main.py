@@ -204,7 +204,8 @@ def initialize_system(config: Dict[str, Any], args):
                 window_title=display_config.get("window_name", "瑕疵检测系统"),
                 class_names=class_names,
                 resolution=resolution,
-                fullscreen=fullscreen
+                fullscreen=fullscreen,
+                io_controller=io_controller
             )
             logger.info("显示界面初始化成功")
         else:
