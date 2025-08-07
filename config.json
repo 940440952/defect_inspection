@@ -18,12 +18,12 @@
 
     },
     "detector": {
-        "model_name": "detector_v6",
-        "class_names": ["堵孔", "外观缺陷","大划痕", "大污点", "小划痕", "小污点"],
+        "model_name": "detector_v8",
+        "class_names": ["外观缺陷","堵孔"],
         "models_dir": "/home/gtm/defect_inspection/models/detector",
         "filter": {
-            "min_area": 700,
-            "confidence_threshold": 0.1,        
+            "min_area": 0,
+            "confidence_threshold": 0,        
             "enabled": true          
         }
     },
