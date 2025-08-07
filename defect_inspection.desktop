@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=MyApp
+Exec=/home/gtm/defect_inspection/start.sh
+Icon=/home/gtm/defect_inspection/icon.png   # 没有图标可删掉这一行
+Terminal=true
+Categories=Utility;
