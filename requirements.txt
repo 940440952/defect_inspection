@@ -6,3 +6,4 @@ ultralytics
 onnxruntime-gpu
 RPi.GPIO
 pyyaml
+busybox
